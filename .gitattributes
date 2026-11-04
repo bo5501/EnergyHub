@@ -1,0 +1,5 @@
+# 统一行尾：源码与脚本一律 LF（避免在 Windows 上提交 CRLF 造成整文件 diff）
+* text=auto eol=lf
+
+*.png binary
+*.bin binary

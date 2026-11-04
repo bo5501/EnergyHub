@@ -1,0 +1,59 @@
+{
+  "format": 1,
+  "restore": {
+    "D:\\戴森球计划反编译文件\\EnergyHubMod\\src\\EnergyHub\\EnergyHub.csproj": {}
+  },
+  "projects": {
+    "D:\\戴森球计划反编译文件\\EnergyHubMod\\src\\EnergyHub\\EnergyHub.csproj": {
+      "version": "1.0.0",
+      "restore": {
+        "projectUniqueName": "D:\\戴森球计划反编译文件\\EnergyHubMod\\src\\EnergyHub\\EnergyHub.csproj",
+        "projectName": "DSPEnergyHub",
+        "projectPath": "D:\\戴森球计划反编译文件\\EnergyHubMod\\src\\EnergyHub\\EnergyHub.csproj",
+        "packagesPath": "C:\\Users\\Administrator\\.nuget\\packages\\",
+        "outputPath": "D:\\戴森球计划反编译文件\\EnergyHubMod\\src\\EnergyHub\\obj\\",
+        "projectStyle": "PackageReference",
+        "configFilePaths": [
+          "D:\\戴森球计划反编译文件\\EnergyHubMod\\NuGet.Config",
+          "C:\\Users\\Administrator\\AppData\\Roaming\\NuGet\\NuGet.Config"
+        ],
+        "originalTargetFrameworks": [
+          "net472"
+        ],
+        "sources": {
+          "C:\\dspbuild\\nupkgs": {},
+          "https://api.nuget.org/v3/index.json": {}
+        },
+        "frameworks": {
+          "net472": {
+            "targetAlias": "net472",
+            "projectReferences": {}
+          }
+        },
+        "warningProperties": {
+          "warnAsError": [
+            "NU1605"
+          ]
+        },
+        "restoreAuditProperties": {
+          "enableAudit": "true",
+          "auditLevel": "low",
+          "auditMode": "direct"
+        }
+      },
+      "frameworks": {
+        "net472": {
+          "targetAlias": "net472",
+          "dependencies": {
+            "Microsoft.NETFramework.ReferenceAssemblies": {
+              "suppressParent": "All",
+              "target": "Package",
+              "version": "[1.0.3, )"
+            }
+          },
+          "runtimeIdentifierGraphPath": "C:\\Program Files\\dotnet\\sdk\\8.0.424\\RuntimeIdentifierGraph.json"
+        }
+      }
+    }
+  }
+}

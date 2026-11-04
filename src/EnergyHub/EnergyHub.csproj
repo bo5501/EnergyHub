@@ -1,0 +1,102 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net472</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <AssemblyName>DSPEnergyHub</AssemblyName>
+    <RootNamespace>EnergyHub</RootNamespace>
+    <Version>1.0.0</Version>
+    <Company>EnergyHub</Company>
+    <Product>Interstellar Energy Hub</Product>
+    <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+    <GenerateAssemblyInfo>true</GenerateAssemblyInfo>
+    <DebugType>portable</DebugType>
+    <NoWarn>CS0436;CS0618;CS0649;CS0169</NoWarn>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+  </PropertyGroup>
+
+  <!-- 游戏程序集：默认值可在命令行覆盖，例如
+       dotnet build -p:GameDir="D:\Steam\steamapps\common\Dyson Sphere Program" -->
+  <PropertyGroup>
+    <GameDir Condition="'$(GameDir)'==''">D:\Program Files (x86)\Steam\steamapps\common\Dyson Sphere Program</GameDir>
+    <ManagedDir>$(GameDir)\DSPGAME_Data\Managed</ManagedDir>
+    <!-- r2modman profile（BepInEx / Harmony / CommonAPI / LDBTool / DSPModSave 的引用来源） -->
+    <ProfileDir Condition="'$(ProfileDir)'==''">$(APPDATA)\r2modmanPlus-local\DysonSphereProgram\profiles\lianji-mod\BepInEx</ProfileDir>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Reference Include="Assembly-CSharp">
+      <HintPath>$(ManagedDir)\Assembly-CSharp.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="UnityEngine">
+      <HintPath>$(ManagedDir)\UnityEngine.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="UnityEngine.CoreModule">
+      <HintPath>$(ManagedDir)\UnityEngine.CoreModule.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="UnityEngine.UI">
+      <HintPath>$(ManagedDir)\UnityEngine.UI.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="UnityEngine.UIModule">
+      <HintPath>$(ManagedDir)\UnityEngine.UIModule.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="UnityEngine.ImageConversionModule">
+      <HintPath>$(ManagedDir)\UnityEngine.ImageConversionModule.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="UnityEngine.InputLegacyModule">
+      <HintPath>$(ManagedDir)\UnityEngine.InputLegacyModule.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="UnityEngine.TextRenderingModule">
+      <HintPath>$(ManagedDir)\UnityEngine.TextRenderingModule.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="UnityEngine.PhysicsModule">
+      <HintPath>$(ManagedDir)\UnityEngine.PhysicsModule.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="UnityEngine.ParticleSystemModule">
+      <HintPath>$(ManagedDir)\UnityEngine.ParticleSystemModule.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="BepInEx">
+      <HintPath>$(ProfileDir)\core\BepInEx.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="0Harmony">
+      <HintPath>$(ProfileDir)\core\0Harmony.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="CommonAPI">
+      <HintPath>$(ProfileDir)\plugins\CommonAPI-CommonAPI\CommonAPI.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="LDBTool">
+      <HintPath>$(ProfileDir)\plugins\xiaoye97-LDBTool\LDBTool.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="DSPModSave">
+      <HintPath>$(ProfileDir)\plugins\CommonAPI-DSPModSave\DSPModSave.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies" Version="1.0.3" PrivateAssets="all" />
+  </ItemGroup>
+
+  <!-- 旧造型（1.5.0 起不再使用）的游戏模型数据，本地才有：仓库不收录，缺失不影响编译
+       （HubMesh.Get() 走 BuildPrism()，Build() 只是留作回退）。 -->
+  <ItemGroup Condition="Exists('Assets\hub_mesh.bin')">
+    <EmbeddedResource Include="Assets\hub_mesh.bin">
+      <LogicalName>EnergyHub.Assets.hub_mesh.bin</LogicalName>
+    </EmbeddedResource>
+  </ItemGroup>
+
+</Project>

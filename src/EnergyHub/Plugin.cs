@@ -1,0 +1,136 @@
+using System;
+using System.IO;
+using BepInEx;
+using BepInEx.Logging;
+using CommonAPI;
+using CommonAPI.Systems;
+using crecheng.DSPModSave;
+using HarmonyLib;
+using UnityEngine;
+using xiaoye97;
+
+namespace EnergyHub
+{
+    [BepInPlugin(C.Guid, C.Name, C.Version)]
+    [BepInDependency(CommonAPIPlugin.GUID)]
+    [BepInDependency(LDBToolPlugin.MODGUID)]
+    [BepInDependency(DSPModSavePlugin.MODGUID)]
+    [CommonAPISubmoduleDependency(nameof(ProtoRegistry))]
+    [ModSaveSettings(LoadOrder = LoadOrder.Preload)]
+    public class Plugin : BaseUnityPlugin, IModCanSave
+    {
+        public static ManualLogSource Log;
+        public static Plugin Instance;
+
+        private static Harmony _harmony;
+        private static bool _iconApplied;
+
+        private void Awake()
+        {
+            Instance = this;
+            Log = Logger;
+            Log.LogInfo(C.Name + " v" + C.Version + " 启动中…");
+
+            // 先装 patch：ModelProto.Preload 会重建 prefabDesc，必须在它跑之前挂上
+            try
+            {
+                _harmony = new Harmony(C.Guid);
+                _harmony.PatchAll(typeof(Plugin).Assembly);
+                int n = 0;
+                foreach (var _ in _harmony.GetPatchedMethods()) n++;
+                Log.LogInfo("Harmony patch 完成: " + n + " 个目标");
+            }
+            catch (Exception e)
+            {
+                Log.LogError("Harmony patch 失败: " + e);
+            }
+
+            // 单独装：结构体方法补丁失败时不要连累其它 patch
+            if (_harmony != null)
+                Patch_ExcBeltUpdate.Apply(_harmony);
+
+            try
+            {
+                Protos.RegisterAll();
+                // LDBTool 会在 Post Loading 阶段开头回调这个 Action（此时 Pre 批次的 proto 已加入 LDB），
+                // 正好是补 Preload() 的时机
+                LDBTool.PostAddDataAction += Protos.PreloadAll;
+            }
+            catch (Exception e)
+            {
+                Log.LogError("proto 注册失败: " + e);
+            }
+        }
+
+        private void Update()
+        {
+            // 万一检视流程中途抛异常导致 entityPool 的 id 屏蔽没还原，这里强制补回来
+            Patch_Inspectee.Recover();
+
+            // LDB 就绪后补一次图标（正常情况下 IconSet.Create 之前已经挂好了，这里只是兜底）
+            if (!_iconApplied && LDB.items != null && LDB.items.dataArray != null && LDB.items.dataArray.Length > 0)
+            {
+                _iconApplied = true;
+                Protos.EnsureIcon();
+            }
+
+            // 按名字解析消耗品 id（信息矩阵 / 黑雾引力透镜）；内部自带重试与幂等
+            try { Items.Resolve(); }
+            catch (Exception e) { Log.LogWarning("解析消耗品失败: " + e.Message); }
+
+            // 1.7.0：老存档里没有我们那个科技节点的 TechState，缺了就要交 600 万 hash。
+            // 命中 ContainsKey 就直接返回，每帧调也没开销。
+            try { Tech.EnsureState(); }
+            catch (Exception e) { Log.LogWarning("补建科技状态失败: " + e.Message); }
+
+            // 兜底：等存档数据就绪后再试一次（正常情况下 LDBTool 的 PostAdd 回调里已经跑完了）。
+            // 加 GameMain.data 判断是为了避免在加载动画阶段提前触发 LDB 的 Resources.Load。
+            if (!Protos.IsPreloaded && GameMain.data != null)
+                Protos.PreloadAll();
+
+            try
+            {
+                HubManager.Tick(Time.deltaTime);
+            }
+            catch (Exception e)
+            {
+                if (Time.frameCount % 600 == 0)
+                    Log.LogError("tick 异常: " + e);
+            }
+
+            // 通电特效的旋转/呼吸
+            try
+            {
+                HubEffect.Animate(Time.deltaTime);
+            }
+            catch (Exception e)
+            {
+                if (Time.frameCount % 600 == 0)
+                    Log.LogError("特效动画异常: " + e);
+            }
+        }
+
+        private void OnDestroy()
+        {
+            _harmony?.UnpatchSelf();
+        }
+
+        // ---------------- DSPModSave ----------------
+
+        public void Export(BinaryWriter w)
+        {
+            HubManager.Export(w);
+        }
+
+        public void Import(BinaryReader r)
+        {
+            HubManager.Import(r);
+        }
+
+        public void IntoOtherSave()
+        {
+            // 新存档：清空运行时状态
+            HubManager.Clear();
+        }
+    }
+}
