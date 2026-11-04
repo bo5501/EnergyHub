@@ -373,6 +373,168 @@ namespace EnergyHub
             if (OnHubsChanged != null) OnHubsChanged();
         }
 
+        // ---------------- 联机同步（1.14.0）----------------
+        //
+        // 口径：主机（host）独占结算，客户端只显示。
+        // 原因：Nebula 的客户端也会本地跑自己星球的 factory，如果两边都执行
+        // 充放电 / 扣料 / 升级，物品与能量会各算一遍，很快对不上（还会触发 desync 警告）。
+        //
+        // 同步内容只走一个包（HubStatePacket.Data，二进制），每 0.5 秒一次：
+        //   每台枢纽 34 字节，100 台也才 3.4 KB，占用可以忽略。
+        // 包里带的是「结果」而不是「操作」：
+        //   模式 / 等级 / 池储量 / 升级进度 / 对接关系 / 累计收发 / 特效开关。
+        // 客户端拿到后直接覆盖本地 HubInfo，再用它刷面板与特效。
+
+        /// <summary>主机：把所有枢纽状态写进一条二进制流（Count + N 条记录）。</summary>
+        public static void CollectStates(BinaryWriter w)
+        {
+            List<HubInfo> list = new List<HubInfo>(32);
+            foreach (var pkv in _byPlanet)
+            {
+                if (pkv.Value == null)
+                    continue;
+                foreach (var kv in pkv.Value)
+                {
+                    if (kv.Value != null)
+                        list.Add(kv.Value);
+                }
+            }
+
+            w.Write(list.Count);
+            for (int i = 0; i < list.Count; i++)
+            {
+                HubInfo info = list[i];
+                w.Write(info.planetId);
+                w.Write(info.entityId);
+                w.Write((byte)info.mode);
+                w.Write((byte)Mathf.Clamp(info.level, 1, C.MaxPoolLevel));
+
+                long pool = 0;
+                PowerExchangerComponent exc;
+                if (TryGetExc(info.planetId, info.entityId, out exc))
+                    pool = exc.currPoolEnergy;
+
+                w.Write(pool);
+                w.Write(info.Capacity);
+                w.Write(info.upAcc);
+                w.Write(info.upMat);
+                w.Write(info.peerPlanetId);
+                w.Write(info.peerEntityId);
+                w.Write(info.totalSent);
+                w.Write(info.totalReceived);
+
+                byte flags = 0;
+                if (info.linked) flags |= 1;
+                if (info.boostActive) flags |= 2;
+                if (info.itemStarved) flags |= 4;
+                if (info.fxTarget > 0.5f) flags |= 8;
+                w.Write(flags);
+            }
+        }
+
+        /// <summary>客户端：把主机广播的状态覆盖到本地 HubInfo / exchange 组件上。</summary>
+        public static void ApplyStates(BinaryReader r)
+        {
+            int n = r.ReadInt32();
+            if (n < 0 || n > 4096)
+                return;
+
+            for (int i = 0; i < n; i++)
+            {
+                int pid = r.ReadInt32();
+                int eid = r.ReadInt32();
+                int mode = r.ReadByte();
+                int level = r.ReadByte();
+                long pool = r.ReadInt64();
+                long cap = r.ReadInt64();
+                long upAcc = r.ReadInt64();
+                long upMat = r.ReadInt64();
+                int peerPlanet = r.ReadInt32();
+                int peerEntity = r.ReadInt32();
+                long sent = r.ReadInt64();
+                long recv = r.ReadInt64();
+                int flags = r.ReadByte();
+
+                HubInfo info = Get(pid, eid);
+                if (info == null)
+                    continue;   // 客户端还没发现这台（通常是远端星球，本来也不显示）
+
+                if (mode >= 0 && mode <= 3)
+                    info.mode = mode;
+                if (level >= 1 && level <= C.MaxPoolLevel)
+                    info.level = level;
+
+                info.upAcc = upAcc;
+                info.upMat = upMat;
+                info.peerPlanetId = peerPlanet;
+                info.peerEntityId = peerEntity;
+                info.totalSent = sent;
+                info.totalReceived = recv;
+
+                info.linked = (flags & 1) != 0;
+                info.boostActive = (flags & 2) != 0;
+                info.itemStarved = (flags & 4) != 0;
+                info.fxTarget = (flags & 8) != 0 ? 1f : 0f;
+
+                // 发送端 / 接收端的对接计数由主机口径反推，别再让本地 RebuildLinks 覆盖
+                if ((HubMode)info.mode == HubMode.Send)
+                    info.receiverCount = info.linked ? 1 : 0;
+                else if ((HubMode)info.mode == HubMode.Receive)
+                    info.senderCount = info.linked ? 1 : 0;
+
+                // 池子储量：直接写进本地的 exchange 组件，面板读的就是它
+                PowerExchangerComponent exc;
+                if (TryGetExc(pid, eid, out exc))
+                {
+                    long clamp = Math.Min(pool, Math.Max(cap, 0));
+                    exc.currPoolEnergy = Math.Max(0, clamp);
+                }
+            }
+        }
+
+        /// <summary>按 (星球, 实体) 找到对应的 exchange 组件（工厂没加载时返回 false）。</summary>
+        private static bool TryGetExc(int planetId, int entityId, out PowerExchangerComponent exc)
+        {
+            exc = default(PowerExchangerComponent);
+            PlanetFactory factory = FactoryOf(planetId);
+            if (factory == null || factory.entityPool == null || factory.powerSystem == null)
+                return false;
+            if (entityId <= 0 || entityId >= factory.entityPool.Length)
+                return false;
+
+            EntityData ed = factory.entityPool[entityId];
+            if (ed.id != entityId || ed.powerExcId <= 0 || ed.powerExcId >= factory.powerSystem.excPool.Length)
+                return false;
+
+            exc = factory.powerSystem.excPool[ed.powerExcId];
+            return true;
+        }
+
+        /// <summary>
+        /// 客户端专用 tick：只把等级同步到本地组件（容量 / 功率用于面板显示），
+        /// 不做任何充放电、扣料、账本与升级。链路关系由主机的广播包维护。
+        /// </summary>
+        private static void ClientVisualTick()
+        {
+            foreach (var pkv in _byPlanet)
+            {
+                PlanetFactory factory = FactoryOf(pkv.Key);
+                if (factory == null || factory.entityPool == null || factory.powerSystem == null)
+                    continue;
+
+                foreach (var kv in pkv.Value)
+                {
+                    HubInfo info = kv.Value;
+                    if (info == null)
+                        continue;
+                    PowerExchangerComponent exc;
+                    if (!TryGetExc(pkv.Key, kv.Key, out exc))
+                        continue;
+                    ApplyLevel(info, ref exc);
+                }
+            }
+        }
+
         // ---------------- 主循环 ----------------
 
         public static void Tick(float dt)
@@ -413,6 +575,14 @@ namespace EnergyHub
             if (_byPlanet.Count == 0)
             {
                 _sendTargets.Clear();
+                return;
+            }
+
+            // 联机（1.14.0）：客户端只做显示，结算全部交给主机。
+            // 放在 RebuildLinks 之前——链路关系由主机广播包维护，本地重算会把它覆盖成「未连接」。
+            if (!MP.IsHost)
+            {
+                ClientVisualTick();
                 return;
             }
 

@@ -1,0 +1,61 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    可选联机子模块（1.14.0）。
+    单独一个程序集 + 输出成 .bin，是为了让主程序集 DSPEnergyHub.dll 完全不引用 Nebula：
+    没装 Nebula 的玩家，BepInEx 扫描主程序集时不会因为缺基类而整个跳过。
+    主程序集只在检测到 NebulaAPI 时，才 Assembly.Load(byte[]) 本模块。
+  -->
+
+  <PropertyGroup>
+    <TargetFramework>net472</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <AssemblyName>DSPEnergyHub.Nebula</AssemblyName>
+    <RootNamespace>EnergyHub.Nebula</RootNamespace>
+    <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+    <DebugType>none</DebugType>
+    <NoWarn>CS0436;CS0618;CS0649;CS0169</NoWarn>
+  </PropertyGroup>
+
+  <PropertyGroup>
+    <GameDir Condition="'$(GameDir)'==''">D:\Program Files (x86)\Steam\steamapps\common\Dyson Sphere Program</GameDir>
+    <ManagedDir>$(GameDir)\DSPGAME_Data\Managed</ManagedDir>
+    <ProfileDir Condition="'$(ProfileDir)'==''">$(APPDATA)\r2modmanPlus-local\DysonSphereProgram\profiles\lianji-mod\BepInEx</ProfileDir>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- 主模块：只取类型，不复制 dll（它由主工程自己输出） -->
+    <ProjectReference Include="..\EnergyHub\EnergyHub.csproj">
+      <Private>false</Private>
+      <IncludeAssets>compile</IncludeAssets>
+    </ProjectReference>
+  </ItemGroup>
+
+  <ItemGroup>
+    <Reference Include="NebulaAPI">
+      <HintPath>$(ProfileDir)\plugins\nebula-NebulaMultiplayerModApi\NebulaAPI.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="BepInEx">
+      <HintPath>$(ProfileDir)\core\BepInEx.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="Assembly-CSharp">
+      <HintPath>$(ManagedDir)\Assembly-CSharp.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="UnityEngine">
+      <HintPath>$(ManagedDir)\UnityEngine.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="UnityEngine.CoreModule">
+      <HintPath>$(ManagedDir)\UnityEngine.CoreModule.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies" Version="1.0.3" PrivateAssets="all" />
+  </ItemGroup>
+
+</Project>

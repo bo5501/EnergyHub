@@ -52,14 +52,24 @@ namespace EnergyHub
             try
             {
                 Protos.RegisterAll();
+                // 1.16.0：科技节点也必须走 LDBTool 的 PreAdd 队列（和创世之书一个套路）。
+                // 在 LDB 建表之后再手工追加会被 LDBTool 建表时冲掉 —— 1.15.x 在科技树里
+                // 看不到节点的真因就是这个，日志里「已注册 (41,5)」那行出现在 "Pre Loading..." 之前。
+                Tech.PreAdd();
+
                 // LDBTool 会在 Post Loading 阶段开头回调这个 Action（此时 Pre 批次的 proto 已加入 LDB），
-                // 正好是补 Preload() 的时机
+                // 正好是补 Preload() + 给科技节点定位置的时机
                 LDBTool.PostAddDataAction += Protos.PreloadAll;
             }
             catch (Exception e)
             {
                 Log.LogError("proto 注册失败: " + e);
             }
+
+            // 联机（1.14.0）：软兼容，Nebula 没装就什么都不做。
+            // 必须在 Harmony 之后调用——子模块里没有任何 patch，只是注册网络包。
+            try { MP.Init(); }
+            catch (Exception e) { Log.LogWarning("联机兼容层初始化失败: " + e.Message); }
         }
 
         private void Update()
@@ -78,6 +88,15 @@ namespace EnergyHub
             try { Items.Resolve(); }
             catch (Exception e) { Log.LogWarning("解析消耗品失败: " + e.Message); }
 
+            // 1.14.0：LDB 就绪后跑一次环境自检（创世之书 / Nebula / 关键物品是否都在）
+            try { Compat.Check(); }
+            catch (Exception e) { Log.LogWarning("兼容自检失败: " + e.Message); }
+
+            // 1.16.0：科技节点在 Awake 就交给 LDBTool 建表，位置/前置在 PostAdd 里定好
+            // （Tech.Layout，由 Protos.PreloadAll 调用）。这里只做「等表就绪 + 事后校验」。
+            try { Tech.Tick(); }
+            catch (Exception e) { Log.LogWarning("科技节点维护失败: " + e.Message); }
+
             // 1.7.0：老存档里没有我们那个科技节点的 TechState，缺了就要交 600 万 hash。
             // 命中 ContainsKey 就直接返回，每帧调也没开销。
             try { Tech.EnsureState(); }
@@ -88,6 +107,10 @@ namespace EnergyHub
             if (!Protos.IsPreloaded && GameMain.data != null)
                 Protos.PreloadAll();
 
+            // 联机状态采样（0.5 秒一次）：决定本帧是「主机结算」还是「客户端只读」
+            try { MP.Poll(Time.deltaTime); }
+            catch (Exception e) { Log.LogWarning("联机状态采样失败: " + e.Message); }
+
             try
             {
                 HubManager.Tick(Time.deltaTime);
@@ -97,6 +120,10 @@ namespace EnergyHub
                 if (Time.frameCount % 600 == 0)
                     Log.LogError("tick 异常: " + e);
             }
+
+            // 主机：把本帧结算结果广播给客户端（内部节流 0.5 秒）
+            try { MP.Broadcast(Time.deltaTime); }
+            catch (Exception e) { Log.LogWarning("联机广播失败: " + e.Message); }
 
             // 通电特效的旋转/呼吸
             try

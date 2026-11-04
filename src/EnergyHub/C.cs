@@ -18,7 +18,7 @@ namespace EnergyHub
     {
         public const string Guid = "com.energyhub.dsp";
         public const string Name = "星际能量枢纽";
-        public const string Version = "1.13.0";
+        public const string Version = "1.16.1";
 
         // proto id
         public const int ModelId = 666;    // 原版模型最大 id = 665
@@ -26,11 +26,32 @@ namespace EnergyHub
         public const int RecipeId = 300;   // 原版配方 1~162
 
         /// <summary>
-        /// 科技树节点 id。**运行时分配**（见 Tech.cs）：Awake 阶段 LDB 还没载入，
-        /// 拿不到原版科技表，硬编码一个 id 又有撞号风险；所以等 LDB 就绪后
-        /// 从「信息矩阵」科技节点后面挂一个空闲 id（&lt;2000 = 主科技树那一页）。
+        /// 科技树节点 id。**固定值**，见 Tech.cs：
+        /// 节点必须在 LDB 建表之前交给 LDBTool（<c>LDBTool.PreAddProto</c>），
+        /// 那一刻 LDB 还没载入、挑不了空闲 id，所以只能用常量。
+        ///
+        /// 1999 在所有已知环境里都是空的：
+        ///   · 原版科技最大 1512 一带，1900 段是黑雾/升级类科技；
+        ///   · 创世之书 3.2.4 内嵌 techs.json 最大 id = 1963（已抽取核对）。
+        /// 必须 &lt; 2000 —— <c>TechProto.page = ID &gt;= 2000 ? 1 : 0</c>，
+        /// 2000 以上会被摆到「升级」那一页去。
         /// </summary>
-        public static int TechId;
+        public const int TechFixedId = 1999;
+
+        /// <summary>运行时实际用的节点 id（正常情况下等于 <see cref="TechFixedId"/>）。</summary>
+        public static int TechId = TechFixedId;
+
+        /// <summary>科技节点图标的兜底路径（原版「星际电力运输」= 能量枢纽那条科技）。</summary>
+        public const string TechIconFallback = "Icons/Tech/1512";
+
+        // ---------------- 科技节点摆放栅格（1.15.1） ----------------
+        //
+        // 参考 UITechTree.GetSqueezedPos：屏幕坐标 = (Position.x × 114, Position.y × 48)，
+        // 而科技树里相邻两列的节点 Position 相差 4（114×4 = 456 px），
+        // 相邻两行的节点 Position 也相差 4（48×4 = 192 px，正好容得下 ~130 px 高的节点面板）。
+        // 所以「往右一格 / 往下一行」在数据上是 ±4，不是 ±1。
+        public const int TechColStep = 4;
+        public const int TechRowStep = 4;
 
         // 建造栏：BuildIndex = 分类*100 + 槽位（UIBuildMenu：分类 ≤15、槽位 ≤12）
         // 分类 6 = 物流，原版「能量枢纽」占 606，我们放到 607

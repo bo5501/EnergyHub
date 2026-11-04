@@ -160,23 +160,24 @@ namespace EnergyHub
             RecipeProto recipe = FindRecipe();
             ResolveRecipeItems(recipe);
 
-            // 科技节点必须建在 item.Preload / recipe.Preload 之前：
+            // 科技节点（1.16.0）：proto 骨架在 Awake 就交给 LDBTool 建表了，这里只补
+            // 位置 / 前置 / 图标 / postTechArray。必须跑在 item.Preload / recipe.Preload 之前：
             // 这两个 Preload 末尾都会调 FindPreTech()，它是「遍历科技表找
-            // UnlockRecipes 含本配方的那一条」。科技还没进表，物品和配方的 preTech 就是 null，
+            // UnlockRecipes 含本配方的那一条」。节点还没进表时，物品和配方的 preTech 就是 null，
             // 制造台/科技树上的「由 XX 解锁」会变成空白。
             try
             {
-                Tech.Register();
+                Tech.Layout();
             }
             catch (System.Exception e)
             {
-                Plugin.Log.LogWarning("科技节点注册失败: " + e);
+                Plugin.Log.LogWarning("科技节点布置失败: " + e);
             }
 
-            // 兜底：科技节点没建成（找不到母节点 / 没空闲 id / 异常）时，
+            // 兜底：科技节点确实排不出来（找不到锚点 / 没空闲 id / 异常）时，
             // 把物品改回「永远解锁」，否则配方永远锁着，玩家造不出建筑 ——
             // 那比「解锁少一个科技节点」严重得多。
-            if (!Tech.Ok)
+            if (Tech.LaidOut && !Tech.Ok)
             {
                 ItemProto fallback = FindItem();
                 if (fallback != null)
@@ -531,8 +532,9 @@ namespace EnergyHub
                 "Charge / discharge power grows with the level, capped at 50 TW.\n" +
                 "Eight belt ports at the base (4 front + 4 back) feed the consumable slots.",
                 "可在星球之间直接输送能量的巨型建筑，同时也能当一台超大容量的蓄电器使用。\n" +
-                "在科技树「信息矩阵」节点后面的「星际能量枢纽」科技解锁（研究需消耗信息矩阵），" +
-                "解锁后才能制造与建造。\n" +
+                "在科技树「能量枢纽」科技（解锁能量枢纽建筑那条）右下方一格解锁" +
+                "「星际能量枢纽」，节点挂在卫星配电系统正下方（研究需消耗信息矩阵）；" +
+                "找不到该节点时退回「信息矩阵」后面。解锁后才能制造与建造。\n" +
                 "\n" +
                 "【三种工作模式】\n" +
                 "· 待机：能量池保持当前电量，不参与电网充放，也不参与星际传输；\n" +

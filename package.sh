@@ -15,6 +15,14 @@ DOTNET="/c/Program Files/dotnet/dotnet"
 echo "== 编译"
 "$DOTNET" build "$ROOT/src/EnergyHub/EnergyHub.csproj" -c Release --nologo -v q
 
+NEBULA_SRC="$ROOT/src/EnergyHub.Nebula"
+if "$DOTNET" build "$NEBULA_SRC/EnergyHub.Nebula.csproj" -c Release --nologo -v q 2>/dev/null; then
+  NEBULA_OK=1
+else
+  NEBULA_OK=0
+  echo "   ！联机子模块未编译（没装 NebulaAPI），发布包将不含 DSPEnergyHub.Nebula.bin"
+fi
+
 # 2) 图标（256x256 PNG）
 "$PY" "$ROOT/tools/make_icon.py"
 
@@ -22,6 +30,16 @@ echo "== 编译"
 mkdir -p "$PKG/BepInEx/plugins/EnergyHub"
 cp "$ROOT/src/EnergyHub/bin/Release/DSPEnergyHub.dll" "$PKG/BepInEx/plugins/EnergyHub/"
 # 只发 dll：pdb 是调试符号，对玩家没用还占体积
+
+if [ "$NEBULA_OK" = "1" ] && [ -f "$NEBULA_SRC/bin/Release/DSPEnergyHub.Nebula.dll" ]; then
+  cp "$NEBULA_SRC/bin/Release/DSPEnergyHub.Nebula.dll" \
+     "$PKG/BepInEx/plugins/EnergyHub/DSPEnergyHub.Nebula.bin"
+else
+  rm -f "$PKG/BepInEx/plugins/EnergyHub/DSPEnergyHub.Nebula.bin"
+fi
+
+# 3.5) manifest：版本号与短描述统一由 tools/stamp_manifest.py 生成，避免每版手改漏字段
+"$PY" "$ROOT/tools/stamp_manifest.py" "$PKG/manifest.json" "$VERSION"
 
 # 4) 校验：manifest 版本 / 图标尺寸 / 文件齐全
 "$PY" - "$PKG" "$VERSION" <<'PY'
@@ -35,6 +53,14 @@ for f in need:
     p = os.path.join(pkg, f)
     assert os.path.isfile(p), "缺文件: " + f
     print("  ok  %-46s %8d B" % (f, os.path.getsize(p)))
+
+# 联机子模块是可选文件：有就打进包，没有也能正常发布（只影响联机同步）
+neb = os.path.join(pkg, "BepInEx/plugins/EnergyHub/DSPEnergyHub.Nebula.bin")
+if os.path.isfile(neb):
+    print("  ok  %-46s %8d B" % ("BepInEx/plugins/EnergyHub/DSPEnergyHub.Nebula.bin",
+                                 os.path.getsize(neb)))
+else:
+    print("  --  联机子模块缺失：本包不含联机同步（单机不受影响）")
 
 m = json.load(open(os.path.join(pkg, "manifest.json"), encoding="utf-8"))
 assert m["name"] == "EnergyHub", m["name"]

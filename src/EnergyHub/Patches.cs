@@ -76,6 +76,10 @@ namespace EnergyHub
     [HarmonyPatch(typeof(ModelProtoSet), "OnAfterDeserialize")]
     internal static class Patch_ModelArray
     {
+        // 1.14.0：创世之书也用 Transpiler 改这个方法的数组长度（扩到 1024）。
+        // 我们的 Postfix 设成 Low 优先级，保证在它之后执行——否则它重建完数组，
+        // 我们补进去的 modelArray[666] 可能被覆盖，建筑会变成不可见的 PrefabDesc.none。
+        [HarmonyPriority(Priority.Low)]
         private static void Postfix()
         {
             Ensure();
@@ -412,6 +416,9 @@ namespace EnergyHub
     [HarmonyPatch(typeof(PowerSystem), nameof(PowerSystem.GameTick))]
     internal static class Patch_PinAnimPool
     {
+        // Low 优先级：其它 MOD（如创世之书）也可能在 GameTick 后改这些实例数据，
+        // 让它们先跑，最后再由我们统一钉住，避免被覆盖后建筑闪烁。
+        [HarmonyPriority(Priority.Low)]
         private static void Postfix(PowerSystem __instance)
         {
             try

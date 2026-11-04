@@ -1,14 +1,20 @@
 # 星际能量枢纽 (Interstellar Energy Hub)
 
-Dyson Sphere Program mod —— 一座能在星球之间输电、也能当超大蓄电器用的玻璃棱镜塔。
+Dyson Sphere Program mod —— 后期解锁的玻璃棱镜巨构：把**超大容量储能**（20 级 100 GJ→1 PJ，
+封顶 50 TW）和**星球间直连输电**做进同一座塔，矿星供电 / 夜面补能 / 戴森球外送 / 削峰填谷都能用。
 
-> 发布包（Thunderstore 格式）在 `dist/EnergyHub-1.13.0.zip`。
+> 发布包（Thunderstore 格式）在 `dist/EnergyHub-1.16.1.zip`。
+> 仓库：https://github.com/bo5501/EnergyHub
+> 反馈：GitHub Issue，或 QQ 1570246504
+> 联机：可选支持 Nebula（主机结算 / 客户端只读，`src/EnergyHub.Nebula` 是可选子模块）；
+> 兼容：尽力兼容创世之书（科技节点统一挂「能量枢纽」科技右下方，材料缺失自动降级）。
 > 对外描述（中文优先，英文摘要附后）见 `dist/EnergyHub/README.md`；manifest 短描述也是中文。
 > 打新包：`bash package.sh`（编译 → 生成图标 → 组装 → zip，含校验）。
 
 ## 玩法
 
-1. **先研究科技**：科技树**「信息矩阵」节点正后方**的「星际能量枢纽」（`Tech.cs` 运行时挂载，
+1. **先研究科技**：科技树**「能量枢纽」科技右下方一格**（卫星配电系统正下方）的「星际能量枢纽」
+   （`Tech.cs` 经 LDBTool PreAdd 注册、建表后定位置，找不到该科技时退回「信息矩阵」正后方，
    研究消耗**信息矩阵**：`ItemPoints=20`，即每 180 hash 配 1 个，总量 = hash×20/3600）。
 2. 解锁后配方 = **能量枢纽 ×5 + 射线接收站 ×5 + 蓄电器 ×100 + 处理器 ×5**（组装台 5 秒）。
    原料 id 在 `Awake` 阶段拿不到，`ResolveRecipeItems` 在 LDB 就绪后按中英文名反查填回。
@@ -77,7 +83,7 @@ src/EnergyHub/
   HubMesh.cs      程序化网格：六棱玻璃棱镜塔 + 中心核 + 底部接口套筒 + 材质
   HubEffect.cs    特效层：三颗公转双色球、6 圈同心环、电弧、激光、地面光晕
   HubManager.cs   枢纽状态、能量搬运、跨星球账本、点对点链路、等级/升级、存档 v4
-  Tech.cs         运行时在「信息矩阵」下方挂科技节点（浅拷贝母节点 + 找空格子放坐标）
+  Tech.cs         科技节点：Awake 交 LDBTool PreAdd 建表，PostAdd 里定位置/前置
   HubWindow.cs    专用 UI 窗口（含储能按钮与能量池升级区块）
   Patches.cs      Preload 挂载 / 点击接管 / 配方解锁 / 动画数据钉死
   UI.cs Skin.cs   界面工具与配色
@@ -103,10 +109,24 @@ tools/
   （已扣掉交换站自身放电上限），避免自己放电抬高需求导致抖动。
 - **等级容量对齐**：`PowerExchangerComponent.Import` 会无条件把 `maxPoolEnergy/energyPerTick`
   重置回 prefabDesc 值，所以每帧 `ApplyLevel` 重新覆盖，读档也不会掉级。
-- **科技节点**：`MemberwiseClone` 浅拷贝「信息矩阵」母节点，只改 `ID/Name/SID/Desc/Conclusion/
-  PreTechs/UnlockRecipes/Level/Position`，HashNeeded、Items、IconPath 全沿用，不猜原版数值。
-  追加时**不能**调 `ProtoSet.OnAfterDeserialize()`（会重置每个 proto 的 `name`），改为反射只补
-  `dataIndices`。必须在 `ItemProto.Preload` / `RecipeProto.Preload` 之前建好，否则 `FindPreTech()` 找不到。
+- **科技节点（1.16.0 重写）**：必须走 **LDBTool 的 PreAdd 队列**，不能事后手工往
+  `LDB.techs.dataArray` 里塞。创世之书就是这样注册它自己那 143 个科技的
+  （`src/Utils/JsonDataUtils.cs`：`LDBTool.PreAddProto(protoJson.ToProto())`），
+  由 LDBTool 在 `Pre Loading` 阶段统一建表；中途手工塞进去的条目在那一刻会被建表结果覆盖掉，
+  科技树遍历 `LDB.techs.dataArray` 建节点，自然就看不到我们那条了（1.15.x 的真因）。
+  所以分两步：
+  1. `Awake` → `Tech.PreAdd()`：构造 `id = C.TechFixedId (1999)` 的骨架
+     （1999 在所有已知环境里都空着；创世 3.2.4 内嵌 techs.json 最大 1963；必须 &lt;2000 才在主科技树页），
+     `LDBTool.PreAddProto()` 提交；
+  2. `PostAddDataAction` → `Tech.Layout()`：此时原版 + 创世的科技都已就位，才反查锚点、算坐标、
+     写 `PreTechs`，并重算母节点的 `postTechArray`（`UITechNode.SetTechProto` 按父节点的
+     `postTechArray` 生成连线，不重算就没有那条线）。
+  锚点是「能量枢纽」科技（解锁原版能量枢纽建筑那条，原版叫「星际电力运输」），按
+  「物品 → `PrefabDesc.isPowerExchanger` → 配方 → 科技」反查，不依赖科技名/语言。
+  位置按真实栅格步长算（`C.TechColStep/TechRowStep = 4`，即 x 456 px / y 192 px）：
+  第一优先「右一格 + 下一行」，创世里就是 (21,-3) → (25,-7)，被占则按表逐格退让。
+  `Layout` 必须跑在 `ItemProto.Preload` / `RecipeProto.Preload` 之前，否则 `FindPreTech()` 找不到。
+  之后每 5 秒确认节点还在表里（被别的 MOD 整表重建冲掉就补一次，最多 3 次）。
 - **配方原料延迟解析**：`RecipeProto.Preload` 会对 `Items[i]` 取 `.Productive`，所以占位必须用
   真实存在的 id（`kAccumulator`），LDB 就绪后按名字换成真 id，再补跑一次 `InitRecipeItems()`。
 - **特效强度**：参照 `PowerSystem` 给 excPool 充电的 `currEnergyPerTick` 与 `StateUpdate` 的斜坡，
@@ -120,9 +140,9 @@ tools/
 
 ## 已知限制
 
-- 未做联机（Nebula）同步。
+- 联机（Nebula）为软依赖：主机结算、客户端只读，客户端点模式/连接/升级/投料会被拦下。
 - 旧存档升级：v2 → v3 的链路会以「存档恢复」重建，需要接收端重新点一次连接才恢复传输；
   v3 → v4 只补 `level`（按 1 级），不影响链路。
-- 1.7.0 起解锁依赖科技节点：若 `Tech.Register()` 失败（找不到母节点 / 没空闲 id），会自动把
+- 1.7.0 起解锁依赖科技节点：若 `Tech.Layout()` 失败（找不到锚点 / 拿不到空闲 id），会自动把
   `UnlockKey` 回落成 `-1`（永远解锁），保证建筑不会因为科技没建成而永久锁死。
 - 塔顶特效是独立 GameObject，不参与建筑的 GPU instancing；枢纽特别多时会有额外 draw call。
