@@ -27,6 +27,8 @@ echo "== 编译"
 # 3) 组装包目录
 mkdir -p "$PKG/BepInEx/plugins/EnergyHub"
 cp "$ROOT/src/EnergyHub/bin/Release/DSPEnergyHub.dll" "$PKG/BepInEx/plugins/EnergyHub/"
+# README 的源头是 docs/README-thunderstore.md（入库版本化；dist/ 被 gitignore）
+cp "$ROOT/docs/README-thunderstore.md" "$PKG/README.md"
 # 只发 dll：pdb 是调试符号，对玩家没用还占体积
 
 # 确保打包目录里没有上一版残留的联机子模块

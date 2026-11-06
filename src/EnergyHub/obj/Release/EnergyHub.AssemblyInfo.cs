@@ -13,7 +13,7 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyCompanyAttribute("EnergyHub")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Release")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+0d33487f444a513cf1ee1559e909c3e58e6a9ff9")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+92f04b564c7b594af0f0230b324c7f6733a21cc1")]
 [assembly: System.Reflection.AssemblyProductAttribute("Interstellar Energy Hub")]
 [assembly: System.Reflection.AssemblyTitleAttribute("DSPEnergyHub")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]

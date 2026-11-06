@@ -10,7 +10,6 @@ namespace EnergyHub
     /// 目的不是「支持所有 MOD」，而是让出问题时一眼能看出是环境问题还是本 MOD 的问题：
     ///   · 装了创世之书（ProjectGenesis）时，它会大量改写配方体系与科技树布局，
     ///     我们依赖的原版物品有可能被替换/隐藏；
-    ///   · 装了 Nebula 时，结算只由主机执行，客户端面板是只读的。
     ///
     /// 检查结果只打日志（不弹窗、不改行为），LDB 就绪后跑一次。
     /// </summary>
@@ -57,8 +56,6 @@ namespace EnergyHub
                 bool genesis = HasGenesis;
                 Plugin.Log.LogInfo("=== 兼容自检 ===");
                 Plugin.Log.LogInfo("  创世之书（ProjectGenesis）: " + (genesis ? "已检测到，配方/科技按降级模式处理" : "未安装"));
-                Plugin.Log.LogInfo("  Nebula 联机框架: " + (MP.HasNebula ? "已安装" : "未安装") +
-                                   (MP.Active ? (MP.IsClient ? "（当前是客户端，只读显示）" : "（当前是主机，负责结算）") : ""));
 
                 CheckItem("建筑物品", C.ItemId);
                 CheckItem("配方原料-蓄电器", 2206);

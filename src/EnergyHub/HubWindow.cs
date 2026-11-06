@@ -440,12 +440,6 @@ namespace EnergyHub
         {
             var info = Info;
             if (info == null) return;
-            // 联机客户端：模式由主机决定，本地改了只会与广播值打架
-            if (MP.IsClient)
-            {
-                UIRealtimeTip.Popup("联机模式：请在主机端切换模式");
-                return;
-            }
             info.mode = (int)m;
             // 离开「接收」就不再是客户端，连接关系由自己持有，顺手清掉
             if (m != HubMode.Receive && info.peerPlanetId >= 0)
@@ -465,11 +459,6 @@ namespace EnergyHub
         {
             var info = Info;
             if (info == null) return;
-            if (MP.IsClient)
-            {
-                UIRealtimeTip.Popup("联机模式：连接 / 断开请在主机端操作");
-                return;
-            }
             int index = _page * PerPage + i;
             if (index < 0 || index >= _peers.Count) return;
 
@@ -517,11 +506,6 @@ namespace EnergyHub
 
         private void AddCell(Cell cell, int n)
         {
-            if (MP.IsClient)
-            {
-                UIRealtimeTip.Popup("联机模式：投料请在主机端操作");
-                return;
-            }
             PlanetFactory factory;
             EntityData ed;
             if (!TryGetHubEntity(out factory, out ed))
@@ -588,11 +572,6 @@ namespace EnergyHub
         /// </summary>
         private void DoUpgrade()
         {
-            if (MP.IsClient)
-            {
-                UIRealtimeTip.Popup("联机模式：升级请在主机端操作");
-                return;
-            }
             PlanetFactory factory;
             EntityData ed;
             if (!TryGetHubEntity(out factory, out ed))
@@ -611,11 +590,6 @@ namespace EnergyHub
 
         private void TakeCell(Cell cell)
         {
-            if (MP.IsClient)
-            {
-                UIRealtimeTip.Popup("联机模式：取出请在主机端操作");
-                return;
-            }
             PlanetFactory factory;
             EntityData ed;
             if (!TryGetHubEntity(out factory, out ed))
@@ -848,47 +822,6 @@ namespace EnergyHub
                                   C.UpgradeCost2Of(info.level) + " 引力矩阵（自动累积）";
             }
 
-            // 联机：客户端只读（放在最后，覆盖上面按模式写的提示）
-            ApplyClientReadOnly();
-        }
-
-        /// <summary>
-        /// 联机客户端：所有会改状态的操作都置灰。
-        /// 面板上的数字是主机广播过来的结果，本地结算已经关掉（见 MP / HubManager.ClientVisualTick），
-        /// 所以按钮点下去只会让玩家以为「点了没反应」，不如直接禁用并说明。
-        /// </summary>
-        private void ApplyClientReadOnly()
-        {
-            if (!MP.IsClient)
-                return;
-
-            if (_modeIdleBtn != null) _modeIdleBtn.interactable = false;
-            if (_modeSendBtn != null) _modeSendBtn.interactable = false;
-            if (_modeRecvBtn != null) _modeRecvBtn.interactable = false;
-            if (_btnUpgrade != null) _btnUpgrade.interactable = false;
-
-            for (int i = 0; i < _rows.Count; i++)
-            {
-                Row r = _rows[i];
-                if (r != null && r.btn != null)
-                    r.btn.interactable = false;
-            }
-
-            for (int i = 0; i < _cells.Count; i++)
-            {
-                Cell c = _cells[i];
-                if (c == null)
-                    continue;
-                if (c.btnAdd != null) c.btnAdd.interactable = false;
-                if (c.btnTake != null) c.btnTake.interactable = false;
-            }
-
-            if (_hintText != null)
-            {
-                _hintText.text = "联机模式：能量结算由主机负责，本端只显示同步结果。\n" +
-                                 "切换模式 / 连接 / 升级 / 投料，请在主机端操作。";
-                _hintText.color = Skin.WarnColor;
-            }
         }
 
         private void RefreshCells(PlanetFactory factory, EntityData ed, HubInfo info, HubMode mode)

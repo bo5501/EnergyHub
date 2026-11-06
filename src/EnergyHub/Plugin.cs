@@ -65,11 +65,6 @@ namespace EnergyHub
             {
                 Log.LogError("proto 注册失败: " + e);
             }
-
-            // 联机（1.14.0）：软兼容，Nebula 没装就什么都不做。
-            // 必须在 Harmony 之后调用——子模块里没有任何 patch，只是注册网络包。
-            try { MP.Init(); }
-            catch (Exception e) { Log.LogWarning("联机兼容层初始化失败: " + e.Message); }
         }
 
         private void Update()
@@ -88,7 +83,7 @@ namespace EnergyHub
             try { Items.Resolve(); }
             catch (Exception e) { Log.LogWarning("解析消耗品失败: " + e.Message); }
 
-            // 1.14.0：LDB 就绪后跑一次环境自检（创世之书 / Nebula / 关键物品是否都在）
+            // 1.14.0：LDB 就绪后跑一次环境自检（创世之书 / 关键物品是否都在）
             try { Compat.Check(); }
             catch (Exception e) { Log.LogWarning("兼容自检失败: " + e.Message); }
 
@@ -106,11 +101,6 @@ namespace EnergyHub
             // 加 GameMain.data 判断是为了避免在加载动画阶段提前触发 LDB 的 Resources.Load。
             if (!Protos.IsPreloaded && GameMain.data != null)
                 Protos.PreloadAll();
-
-            // 联机状态采样（0.5 秒一次）：决定本帧是「主机结算」还是「客户端只读」
-            try { MP.Poll(Time.deltaTime); }
-            catch (Exception e) { Log.LogWarning("联机状态采样失败: " + e.Message); }
-
             try
             {
                 HubManager.Tick(Time.deltaTime);
@@ -120,10 +110,6 @@ namespace EnergyHub
                 if (Time.frameCount % 600 == 0)
                     Log.LogError("tick 异常: " + e);
             }
-
-            // 主机：把本帧结算结果广播给客户端（内部节流 0.5 秒）
-            try { MP.Broadcast(Time.deltaTime); }
-            catch (Exception e) { Log.LogWarning("联机广播失败: " + e.Message); }
 
             // 通电特效的旋转/呼吸
             try

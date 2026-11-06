@@ -100,12 +100,5 @@
     <AssemblyMetadata Include="AI_Disclosure" Value="Code, docs and textures generated with generative AI assistance; author directed design, tested and published." />
   </ItemGroup>
 
-  <!-- 旧造型（1.5.0 起不再使用）的游戏模型数据，本地才有：仓库不收录，缺失不影响编译
-       （HubMesh.Get() 走 BuildPrism()，Build() 只是留作回退）。 -->
-  <ItemGroup Condition="Exists('Assets\hub_mesh.bin')">
-    <EmbeddedResource Include="Assets\hub_mesh.bin">
-      <LogicalName>EnergyHub.Assets.hub_mesh.bin</LogicalName>
-    </EmbeddedResource>
-  </ItemGroup>
 
 </Project>

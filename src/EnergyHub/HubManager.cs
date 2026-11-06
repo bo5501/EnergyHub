@@ -376,7 +376,7 @@ namespace EnergyHub
         // ---------------- 联机同步（1.14.0）----------------
         //
         // 口径：主机（host）独占结算，客户端只显示。
-        // 原因：Nebula 的客户端也会本地跑自己星球的 factory，如果两边都执行
+        // 原因：只有本端在跑结算，远端星球的 factory 由各自的本端处理，如果两边都执行
         // 充放电 / 扣料 / 升级，物品与能量会各算一遍，很快对不上（还会触发 desync 警告）。
         //
         // 同步内容只走一个包（HubStatePacket.Data，二进制），每 0.5 秒一次：
@@ -510,31 +510,6 @@ namespace EnergyHub
             return true;
         }
 
-        /// <summary>
-        /// 客户端专用 tick：只把等级同步到本地组件（容量 / 功率用于面板显示），
-        /// 不做任何充放电、扣料、账本与升级。链路关系由主机的广播包维护。
-        /// </summary>
-        private static void ClientVisualTick()
-        {
-            foreach (var pkv in _byPlanet)
-            {
-                PlanetFactory factory = FactoryOf(pkv.Key);
-                if (factory == null || factory.entityPool == null || factory.powerSystem == null)
-                    continue;
-
-                foreach (var kv in pkv.Value)
-                {
-                    HubInfo info = kv.Value;
-                    if (info == null)
-                        continue;
-                    PowerExchangerComponent exc;
-                    if (!TryGetExc(pkv.Key, kv.Key, out exc))
-                        continue;
-                    ApplyLevel(info, ref exc);
-                }
-            }
-        }
-
         // ---------------- 主循环 ----------------
 
         public static void Tick(float dt)
@@ -575,14 +550,6 @@ namespace EnergyHub
             if (_byPlanet.Count == 0)
             {
                 _sendTargets.Clear();
-                return;
-            }
-
-            // 联机（1.14.0）：客户端只做显示，结算全部交给主机。
-            // 放在 RebuildLinks 之前——链路关系由主机广播包维护，本地重算会把它覆盖成「未连接」。
-            if (!MP.IsHost)
-            {
-                ClientVisualTick();
                 return;
             }
 
