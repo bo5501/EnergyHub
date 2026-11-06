@@ -42,10 +42,26 @@ namespace EnergyHub
 
         private const float PollSec = 0.5f;
 
+        /// <summary>
+        /// 1.19.0 起发布包不再包含 DSPEnergyHub.Nebula.bin（版主要求去掉包内的非 dll 二进制），
+        /// 所以这里关掉加载。子模块源码仍在 src/EnergyHub.Nebula，把它重新打回 .bin 并把这个
+        /// 开关改回 true 即可恢复联机同步。
+        /// </summary>
+        private static readonly bool BridgeEnabled = false;
+
         // ---------------- 初始化 / 轮询 ----------------
 
         public static void Init()
         {
+            if (!BridgeEnabled)
+            {
+                HasNebula = FindNebulaApi() != null;
+                if (HasNebula)
+                    Plugin.Log.LogInfo("检测到 Nebula，但本版本不含联机子模块（1.19.0 起移除），按单机运行");
+                _broken = true;     // 不再重试，也不刷日志
+                return;
+            }
+
             TryLoad();
             if (_loaded)
                 Plugin.Log.LogInfo("联机兼容层已就绪（Nebula 已安装，结算将以主机为准）");
@@ -109,7 +125,7 @@ namespace EnergyHub
 
         private static void TryLoad()
         {
-            if (_loaded || _broken)
+            if (!BridgeEnabled || _loaded || _broken)
                 return;
 
             try

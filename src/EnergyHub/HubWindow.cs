@@ -178,7 +178,7 @@ namespace EnergyHub
             UI.Panel(_root, "bg", 0f, 0f, W, H, Skin.PanelColor, Skin.PanelSprite, Skin.PanelType);
             UI.Panel(_root, "edge", 0f, 0f, W, 2f, Skin.AccentColor * 0.75f);
 
-            _title = UI.Label(_root, "title", "星际能量枢纽", 34f, 6f, 460f, 40f,
+            _title = UI.Label(_root, "title", "星际能量枢纽塔", 34f, 6f, 460f, 40f,
                 Skin.TitleSize > 0 ? Skin.TitleSize : 20, Skin.TitleColor);
             if (Skin.CloseTemplate != null)
             {

@@ -1,19 +1,24 @@
-# 星际能量枢纽 (Interstellar Energy Hub)
+# 星际能量枢纽塔 (Interstellar Energy Hub Tower)
 
 Dyson Sphere Program mod —— 后期解锁的玻璃棱镜巨构：把**超大容量储能**（20 级 100 GJ→1 PJ，
 封顶 50 TW）和**星球间直连输电**做进同一座塔，矿星供电 / 夜面补能 / 戴森球外送 / 削峰填谷都能用。
 
-> 发布包（Thunderstore 格式）在 `dist/EnergyHub-1.16.1.zip`。
+> 发布包（Thunderstore 格式）在 `dist/EnergyHubTower-1.17.0.zip`。
 > 仓库：https://github.com/bo5501/EnergyHub
 > 反馈：GitHub Issue，或 QQ 1570246504
 > 联机：可选支持 Nebula（主机结算 / 客户端只读，`src/EnergyHub.Nebula` 是可选子模块）；
 > 兼容：尽力兼容创世之书（科技节点统一挂「能量枢纽」科技右下方，材料缺失自动降级）。
 > 对外描述（中文优先，英文摘要附后）见 `dist/EnergyHub/README.md`；manifest 短描述也是中文。
+> **发布合规**（填上传表单前必读 `docs/THUNDERSTORE.md`）：
+> 上传时 `Contains NSFW content` **必须选 No**（选错会被判 `Invalid submission` 直接拒掉，且该标志
+> 不能事后改、也不跨版本继承，只能发新版本重设）；README 顶部有「内容与合规声明」，写明无成人内容、
+> AI 使用披露（程序集带 `AI_Assisted_Creation=true` / `AI_Model_Vendor=DeepSeek`）；
+> DSP 社区暂**无** `AI Generated` 分类，故以 README 声明为披露依据。
 > 打新包：`bash package.sh`（编译 → 生成图标 → 组装 → zip，含校验）。
 
 ## 玩法
 
-1. **先研究科技**：科技树**「能量枢纽」科技右下方一格**（卫星配电系统正下方）的「星际能量枢纽」
+1. **先研究科技**：科技树**「能量枢纽」科技右下方一格**（卫星配电系统正下方）的「星际能量枢纽塔」
    （`Tech.cs` 经 LDBTool PreAdd 注册、建表后定位置，找不到该科技时退回「信息矩阵」正后方，
    研究消耗**信息矩阵**：`ItemPoints=20`，即每 180 hash 配 1 个，总量 = hash×20/3600）。
 2. 解锁后配方 = **能量枢纽 ×5 + 射线接收站 ×5 + 蓄电器 ×100 + 处理器 ×5**（组装台 5 秒）。

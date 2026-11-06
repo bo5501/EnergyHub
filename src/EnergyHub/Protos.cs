@@ -63,7 +63,7 @@ namespace EnergyHub
                 BuildMode = 1,                // 单体建造
                 // 1.7.0：解锁改由科技树管。
                 //   -1 = 永远解锁（以前为了「开局就能搓」）；
-                //   现在必须研究「星际能量枢纽」科技才解锁，所以填 0，
+                //   现在必须研究「星际能量枢纽塔」科技才解锁，所以填 0，
                 //   ItemUnlocked 会顺着 recipes 去查 recipeUnlocked（见 GameHistoryData.ItemUnlocked）。
                 UnlockKey = 0,
                 PreTechOverride = 0,
@@ -182,7 +182,7 @@ namespace EnergyHub
                 ItemProto fallback = FindItem();
                 if (fallback != null)
                     fallback.UnlockKey = -1;
-                Plugin.Log.LogWarning("科技节点不可用：已把星际能量枢纽改回「永远解锁」");
+                Plugin.Log.LogWarning("科技节点不可用：已把星际能量枢纽塔改回「永远解锁」");
             }
 
             ItemProto item = FindItem();
@@ -508,7 +508,7 @@ namespace EnergyHub
 
         private static void RegisterStrings()
         {
-            ProtoRegistry.RegisterString(C.LItemName, "Interstellar Energy Hub", "星际能量枢纽");
+            ProtoRegistry.RegisterString(C.LItemName, "Interstellar Energy Hub Tower", "星际能量枢纽塔");
 
             // 1.7.0：制作台 / 建造栏里显示的是这段 Description，必须把「这是干什么的」说清楚。
             // 换行在 UIItemTip 里是支持的（原版物品描述也有多行）。
@@ -533,7 +533,7 @@ namespace EnergyHub
                 "Eight belt ports at the base (4 front + 4 back) feed the consumable slots.",
                 "可在星球之间直接输送能量的巨型建筑，同时也能当一台超大容量的蓄电器使用。\n" +
                 "在科技树「能量枢纽」科技（解锁能量枢纽建筑那条）右下方一格解锁" +
-                "「星际能量枢纽」，节点挂在卫星配电系统正下方（研究需消耗信息矩阵）；" +
+                "「星际能量枢纽塔」，节点挂在卫星配电系统正下方（研究需消耗信息矩阵）；" +
                 "找不到该节点时退回「信息矩阵」后面。解锁后才能制造与建造。\n" +
                 "\n" +
                 "【三种工作模式】\n" +
@@ -564,13 +564,13 @@ namespace EnergyHub
                 "充/放功率随容量提升（满池约 20 秒充满），功率硬顶 50 TW。\n" +
                 "\n" +
                 "【传送带接口】底座前后各有 4 个接口（共 8 个进口），消耗品可以直接用传送带送进来。");
-            ProtoRegistry.RegisterString(C.LRecipeName, "Interstellar Energy Hub", "星际能量枢纽");
+            ProtoRegistry.RegisterString(C.LRecipeName, "Interstellar Energy Hub Tower", "星际能量枢纽塔");
             ProtoRegistry.RegisterString(C.LRecipeDesc,
                 "Assemble an Interstellar Energy Hub from power exchangers, ray receivers, " +
                 "accumulators and processors.",
-                "用能量枢纽、射线接收站、蓄电器与处理器组件组装一台星际能量枢纽。");
+                "用能量枢纽、射线接收站、蓄电器与处理器组件组装一台星际能量枢纽塔。");
 
-            ProtoRegistry.RegisterString(C.LTechName, "Interstellar Energy Hub", "星际能量枢纽");
+            ProtoRegistry.RegisterString(C.LTechName, "Interstellar Energy Hub Tower", "星际能量枢纽塔");
             ProtoRegistry.RegisterString(C.LTechDesc,
                 "Engineers finally worked out how to fold a power grid through a warper lane. " +
                 "Unlocks the Interstellar Energy Hub: a glass prism tower that stores energy like a giant " +
@@ -578,7 +578,7 @@ namespace EnergyHub
                 "Researched with Information Matrices.",
                 "把整座电网折叠进翘曲通道的第一次成功尝试。\n" +
                 "\n" +
-                "解锁「星际能量枢纽」的建造与手工组装：\n" +
+                "解锁「星际能量枢纽塔」的建造与手工组装：\n" +
                 "· 池子是一台超大容量蓄电器，发送 / 接收时自动为电网充放电（1 级 100 GJ，满级 1 PJ，功率随等级提升、硬顶 50 TW）；\n" +
                 "· 可在恒星系内 / 跨恒星系点对点输送能量，卡槽放三级增产剂可再提速 ×2；\n" +
                 "· 接收端接入本地电网，把远方的电直接喂进工厂。\n" +
@@ -587,7 +587,7 @@ namespace EnergyHub
                 "建造材料：能量枢纽 ×5、射线接收站 ×5、蓄电器 ×100、处理器组件 ×5。");
             ProtoRegistry.RegisterString(C.LTechConclusion,
                 "Unlocks the Interstellar Energy Hub.",
-                "解锁「星际能量枢纽」的建造与手工组装。");
+                "解锁「星际能量枢纽塔」的建造与手工组装。");
         }
     }
 }

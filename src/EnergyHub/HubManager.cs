@@ -215,7 +215,7 @@ namespace EnergyHub
     }
 
     /// <summary>
-    /// 星际能量枢纽的全局管理器。
+    /// 星际能量枢纽塔的全局管理器。
     /// 能量池直接复用游戏原生的 PowerExchangerComponent：
     ///   state =  1 表示从本地电网充电（发送端抽电）
     ///   state = -1 表示向本地电网放电（接收端注入）

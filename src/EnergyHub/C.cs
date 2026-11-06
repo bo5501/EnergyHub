@@ -17,8 +17,8 @@ namespace EnergyHub
     internal static class C
     {
         public const string Guid = "com.energyhub.dsp";
-        public const string Name = "星际能量枢纽";
-        public const string Version = "1.16.1";
+        public const string Name = "星际能量枢纽塔";
+        public const string Version = "1.19.0";
 
         // proto id
         public const int ModelId = 666;    // 原版模型最大 id = 665

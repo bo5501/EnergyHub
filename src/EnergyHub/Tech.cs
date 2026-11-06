@@ -8,14 +8,14 @@ namespace EnergyHub
 {
     /// <summary>
     /// 科技树节点：挂在「能量枢纽」科技（解锁原版能量枢纽建筑那条）的右下方一格，
-    /// 形成一条分支出「星际能量枢纽」；找不到那条科技时退回「信息矩阵」后面。
+    /// 形成一条分支出「星际能量枢纽塔」；找不到那条科技时退回「信息矩阵」后面。
     ///
     /// ============ 1.16.0：为什么整段重写 ============
     ///
     /// 1.15.x 是「运行时手工追加」：在 <see cref="Protos.PreloadAll"/>（或者更早的 Update 里）
     /// 反射把 TechProto 塞进 <c>LDB.techs.dataArray</c>。日志实测这条路是错的：
     ///
-    ///     [星际能量枢纽] 科技节点已注册: id=1999 ... 锚点坐标=(37,9) 坐标=(41,5)
+    ///     [星际能量枢纽塔] 科技节点已注册: id=1999 ... 锚点坐标=(37,9) 坐标=(41,5)
     ///     [LDBTool] Pre Loading...
     ///     [LDBTool] Add 1947 ... to TechProtoSet.      ← 创世之书这时候才整批建表
     ///
@@ -324,7 +324,7 @@ namespace EnergyHub
                     for (int i = 0; i < items.Length; i++)
                     {
                         ItemProto it = items[i];
-                        if (it == null || it.ID == C.ItemId)   // 排除本 MOD 自己的「星际能量枢纽」
+                        if (it == null || it.ID == C.ItemId)   // 排除本 MOD 自己的「星际能量枢纽塔」
                             continue;
                         if (it.prefabDesc != null && it.prefabDesc.isPowerExchanger)
                             energyItems.Add(it.ID);
@@ -660,7 +660,7 @@ namespace EnergyHub
                     return;
                 it.UnlockKey = -1;
                 it.FindPreTech();
-                Plugin.Log.LogWarning("科技：" + why + " —— 已把星际能量枢纽改回「永远解锁」");
+                Plugin.Log.LogWarning("科技：" + why + " —— 已把星际能量枢纽塔改回「永远解锁」");
             }
             catch { }
         }
