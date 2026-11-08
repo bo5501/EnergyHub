@@ -240,11 +240,19 @@ def render(ax, elev_deg, azim_deg, faces, title, ylim=None, center=(0.0, 0.0, 0.
         s.set_visible(False)
 
 
-faces = build(t_phase=0.7)
-fig, axes = plt.subplots(1, 3, figsize=(18.5, 7.6), facecolor="#080a14")
-render(axes[0], 6, -90, faces, "front", ylim=(-3.6, 6.4), center=(0, 29.8, 0))
-render(axes[1], 20, -56, faces, "3/4 view", ylim=(-3.6, 6.4), center=(0, 29.8, 0))
-render(axes[2], 72, -90, faces, "player view (looking down)", ylim=(-6.2, 6.2), center=(0, 29.8, 0))
-plt.tight_layout()
-plt.savefig(r"D:\戴森球计划反编译文件\hub_orb_head.png", dpi=130, facecolor="#080a14")
-print("ok")
+def _preview():
+    """独立运行时的三视图预览（被 make_icon.py import 时不会执行）。"""
+    import os
+    faces = build(t_phase=0.7)
+    fig, axes = plt.subplots(1, 3, figsize=(18.5, 7.6), facecolor="#080a14")
+    render(axes[0], 6, -90, faces, "front", ylim=(-3.6, 6.4), center=(0, 29.8, 0))
+    render(axes[1], 20, -56, faces, "3/4 view", ylim=(-3.6, 6.4), center=(0, 29.8, 0))
+    render(axes[2], 72, -90, faces, "player view (looking down)", ylim=(-6.2, 6.2), center=(0, 29.8, 0))
+    plt.tight_layout()
+    out = os.path.join(os.path.dirname(os.path.abspath(__file__)), "hub_orb_head_preview.png")
+    plt.savefig(out, dpi=130, facecolor="#080a14")
+    print("preview:", out)
+
+
+if __name__ == "__main__":
+    _preview()

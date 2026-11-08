@@ -267,6 +267,11 @@ namespace EnergyHub
         /// <summary>每帧动画（旋转 / 呼吸 / 清理失效实体）。</summary>
         public static void Animate(float dt)
         {
+            // 主菜单 / 退出游戏后 GameMain 已被销毁，实例对象全是「假 null」，
+            // 这时再遍历它们只会刷异常。等下次进存档再动画。
+            if (GameMain.data == null)
+                return;
+
             float t = Time.time;
             float pS = 0.80f + 0.20f * Mathf.Sin(t * 2.6f);
             float pR = 0.82f + 0.18f * Mathf.Sin(t * 1.9f + 1.1f);

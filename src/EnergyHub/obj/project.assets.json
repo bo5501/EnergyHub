@@ -2,6 +2,15 @@
   "version": 3,
   "targets": {
     ".NETFramework,Version=v4.7.2": {
+      "DysonSphereProgram.Modding.NebulaMultiplayerModApi/2.1.0": {
+        "type": "package",
+        "compile": {
+          "lib/net472/NebulaAPI.dll": {}
+        },
+        "runtime": {
+          "lib/net472/_._": {}
+        }
+      },
       "Microsoft.NETFramework.ReferenceAssemblies/1.0.3": {
         "type": "package",
         "dependencies": {
@@ -17,6 +26,18 @@
     }
   },
   "libraries": {
+    "DysonSphereProgram.Modding.NebulaMultiplayerModApi/2.1.0": {
+      "sha512": "F5Ru9QhyzLD7ndrb0S/DHpqs9MjpupspE78kHJJy9b7D/Z6KcTuGpu4UOyUclcmQyVjtBU2/ovjh/mZYhpIJWA==",
+      "type": "package",
+      "path": "dysonsphereprogram.modding.nebulamultiplayermodapi/2.1.0",
+      "files": [
+        ".nupkg.metadata",
+        ".signature.p7s",
+        "dysonsphereprogram.modding.nebulamultiplayermodapi.2.1.0.nupkg.sha512",
+        "dysonsphereprogram.modding.nebulamultiplayermodapi.nuspec",
+        "lib/net472/NebulaAPI.dll"
+      ]
+    },
     "Microsoft.NETFramework.ReferenceAssemblies/1.0.3": {
       "sha512": "vUc9Npcs14QsyOD01tnv/m8sQUnGTGOw1BCmKcv77LBJY7OxhJ+zJF7UD/sCL3lYNFuqmQEVlkfS4Quif6FyYg==",
       "type": "package",
@@ -411,6 +432,7 @@
   },
   "projectFileDependencyGroups": {
     ".NETFramework,Version=v4.7.2": [
+      "DysonSphereProgram.Modding.NebulaMultiplayerModApi >= 2.1.0",
       "Microsoft.NETFramework.ReferenceAssemblies >= 1.0.3"
     ]
   },
@@ -420,15 +442,16 @@
   "project": {
     "version": "1.0.0",
     "restore": {
-      "projectUniqueName": "D:\\戴森球计划反编译文件\\EnergyHubMod\\src\\EnergyHub\\EnergyHub.csproj",
+      "projectUniqueName": "G:\\py脚本\\戴森球计划mod\\EnergyHub-1.19.2\\src\\EnergyHub\\EnergyHub.csproj",
       "projectName": "DSPEnergyHub",
-      "projectPath": "D:\\戴森球计划反编译文件\\EnergyHubMod\\src\\EnergyHub\\EnergyHub.csproj",
+      "projectPath": "G:\\py脚本\\戴森球计划mod\\EnergyHub-1.19.2\\src\\EnergyHub\\EnergyHub.csproj",
       "packagesPath": "C:\\Users\\Administrator\\.nuget\\packages\\",
-      "outputPath": "D:\\戴森球计划反编译文件\\EnergyHubMod\\src\\EnergyHub\\obj\\",
+      "outputPath": "G:\\py脚本\\戴森球计划mod\\EnergyHub-1.19.2\\src\\EnergyHub\\obj\\",
       "projectStyle": "PackageReference",
       "configFilePaths": [
-        "D:\\戴森球计划反编译文件\\EnergyHubMod\\NuGet.Config",
-        "C:\\Users\\Administrator\\AppData\\Roaming\\NuGet\\NuGet.Config"
+        "G:\\py脚本\\戴森球计划mod\\EnergyHub-1.19.2\\NuGet.Config",
+        "C:\\Users\\Administrator\\AppData\\Roaming\\NuGet\\NuGet.Config",
+        "C:\\Program Files (x86)\\NuGet\\Config\\Microsoft.VisualStudio.Offline.config"
       ],
       "originalTargetFrameworks": [
         "net472"
@@ -452,19 +475,26 @@
         "enableAudit": "true",
         "auditLevel": "low",
         "auditMode": "direct"
-      }
+      },
+      "SdkAnalysisLevel": "10.0.200"
     },
     "frameworks": {
       "net472": {
         "targetAlias": "net472",
         "dependencies": {
+          "DysonSphereProgram.Modding.NebulaMultiplayerModApi": {
+            "include": "Compile, Build, Native, ContentFiles, Analyzers, BuildTransitive",
+            "suppressParent": "All",
+            "target": "Package",
+            "version": "[2.1.0, )"
+          },
           "Microsoft.NETFramework.ReferenceAssemblies": {
             "suppressParent": "All",
             "target": "Package",
             "version": "[1.0.3, )"
           }
         },
-        "runtimeIdentifierGraphPath": "C:\\Program Files\\dotnet\\sdk\\8.0.424\\RuntimeIdentifierGraph.json"
+        "runtimeIdentifierGraphPath": "C:\\Program Files\\dotnet\\sdk\\10.0.202\\RuntimeIdentifierGraph.json"
       }
     }
   }

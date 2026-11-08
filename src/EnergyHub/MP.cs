@@ -1,192 +1,145 @@
 using System;
-using System.IO;
-using System.Reflection;
+using NebulaAPI;
+using NebulaAPI.Networking;
 
 namespace EnergyHub
 {
     /// <summary>
-    /// 联机（NebulaMultiplayerMod）软兼容层。
+    /// 联机适配（1.19.5）：直接依赖 Nebula 的**官方公开 API**（NebulaAPI.dll），
+    /// 和创世之书用的是同一套做法。
     ///
-    /// 设计约束：主程序集**不能**引用 NebulaAPI / NebulaWorld。
-    /// 否则没装联机框架的玩家，BepInEx 在扫描插件类型时会因为基类解析失败
-    /// （ReflectionTypeLoadException）而把整个 DSPEnergyHub.dll 跳过，MOD 直接不加载。
+    /// 为什么这条路走得通，而之前那个 <c>DSPEnergyHub.Nebula.bin</c> 不行：
+    ///   · NebulaAPI 是官方给第三方 mod 用的稳定接口：<c>BasePacketProcessor&lt;T&gt;</c> +
+    ///     <c>[RegisterPacketProcessor]</c> + <c>RegisterPackets(assembly)</c>，全都 public；
+    ///   · 发布包里**不带** NebulaAPI.dll（Thunderstore 有独立依赖包
+    ///     <c>NebulaModTeam-NebulaMultiplayerModApi</c>，安装时自动拉），
+    ///     所以插件目录仍然只有 <c>DSPEnergyHub.dll</c> 一个文件；
+    ///   · 那个 API 包自己写着 “Does NOT require Nebula”，纯单机玩家装上没有任何副作用。
     ///
-    /// 所以所有 Nebula 相关代码都放在可选的子模块 DSPEnergyHub.Nebula.bin 里，
-    /// 由本类在运行时按需 Assembly.Load(byte[]) 载入，再用反射调用。
-    /// 没装 Nebula 时：子模块根本不加载，所有成员返回单机语义，零开销、零副作用。
+    /// 分工：主机（房主）是唯一权威，负责能量结算、扣料、升级判定；
+    /// 客户端只回放主机广播的状态，并在本地操作后把那一台上报给主机。
     /// </summary>
     public static class MP
     {
-        /// <summary>系统里是否存在 NebulaAPI（装过 Nebula 就会是 true，但不代表正在联机）。</summary>
-        public static bool HasNebula;
+        /// <summary>主机每 0.5 秒广播一次全量状态。</summary>
+        public const float BroadcastInterval = 0.5f;
 
-        /// <summary>当前是否处于多人会话中。</summary>
-        public static bool Active;
+        private static bool _registered;
 
-        /// <summary>本端是否为客户端（非主机）。</summary>
-        public static bool IsClient;
-
-        /// <summary>
-        /// 本端是否负责结算。单机恒为 true；联机时只有主机为 true。
-        /// HubManager 的结算逻辑（充放电 / 扣料 / 升级 / 账本）全靠它 gate。
-        /// </summary>
-        public static bool IsHost { get { return !Active || !IsClient; } }
-
-        private static MethodInfo _mActive;
-        private static MethodInfo _mIsClient;
-        private static MethodInfo _mBroadcast;
-        private static bool _loaded;
-        private static bool _broken;          // 反射链路出过一次错就彻底停用，避免每帧刷日志
-        private static float _timer;
-        private static float _retry;
-
-        private const float PollSec = 0.5f;
-
-        /// <summary>
-        /// 1.19.0 起发布包不再包含 DSPEnergyHub.Nebula.bin（版主要求去掉包内的非 dll 二进制），
-        /// 所以这里关掉加载。子模块源码仍在 src/EnergyHub.Nebula，把它重新打回 .bin 并把这个
-        /// 开关改回 true 即可恢复联机同步。
-        /// </summary>
-        private static readonly bool BridgeEnabled = false;
-
-        // ---------------- 初始化 / 轮询 ----------------
-
+        /// <summary>启动时打一行状态，便于看日志确认联机层是否就位。</summary>
         public static void Init()
         {
-            if (!BridgeEnabled)
+            if (_registered)
+                return;
+            _registered = true;
+
+            // 扫描本程序集里所有 [RegisterPacketProcessor] 的处理器。
+            NebulaModAPI.RegisterPackets(typeof(MP).Assembly);
+
+            // 客户端进/回星球时先向主机要一份该星球的枢纽快照：
+            // 光靠 0.5 秒轮询广播，落地那一下会先显示 0 再跳变。
+            NebulaModAPI.OnPlanetLoadRequest += planetId =>
             {
-                HasNebula = FindNebulaApi() != null;
-                if (HasNebula)
-                    Plugin.Log.LogInfo("检测到 Nebula，但本版本不含联机子模块（1.19.0 起移除），按单机运行");
-                _broken = true;     // 不再重试，也不刷日志
-                return;
-            }
-
-            TryLoad();
-            if (_loaded)
-                Plugin.Log.LogInfo("联机兼容层已就绪（Nebula 已安装，结算将以主机为准）");
-            else if (HasNebula)
-                Plugin.Log.LogWarning("检测到 Nebula，但联机子模块加载失败（DSPEnergyHub.Nebula.bin 缺失？）——按单机运行");
-        }
-
-        /// <summary>每帧调用（内部 0.5 秒采样一次，反射开销可忽略）。</summary>
-        public static void Poll(float dt)
-        {
-            if (_broken)
-                return;
-
-            _timer += dt;
-            if (_timer < PollSec)
-                return;
-            _timer = 0f;
-
-            if (!_loaded)
-            {
-                _retry -= PollSec;
-                if (_retry <= 0f)
+                if (!IsClient)
+                    return;
+                try
                 {
-                    _retry = 3f;
-                    TryLoad();
+                    NebulaModAPI.MultiplayerSession.Network.SendPacket(new HubRequestPacket(planetId));
                 }
-                return;
-            }
-
-            try
-            {
-                Active = (bool)_mActive.Invoke(null, null);
-                IsClient = Active && (bool)_mIsClient.Invoke(null, null);
-            }
-            catch (Exception e)
-            {
-                _broken = true;
-                Active = false;
-                IsClient = false;
-                Plugin.Log.LogWarning("联机状态探测失败，回退单机模式: " + e.Message);
-            }
-        }
-
-        /// <summary>主机调用：把本机所有枢纽状态广播给客户端（内部自带节流）。</summary>
-        public static void Broadcast(float dt)
-        {
-            if (_broken || !_loaded || !Active || IsClient || _mBroadcast == null)
-                return;
-            try
-            {
-                _mBroadcast.Invoke(null, new object[] { dt });
-            }
-            catch (Exception e)
-            {
-                _broken = true;
-                Plugin.Log.LogWarning("联机状态广播失败，本局不再同步: " + e.Message);
-            }
-        }
-
-        // ---------------- 载入可选子模块 ----------------
-
-        private static void TryLoad()
-        {
-            if (!BridgeEnabled || _loaded || _broken)
-                return;
-
-            try
-            {
-                if (FindNebulaApi() == null)
-                    return;     // 没装 Nebula：正常单机，不加载子模块
-
-                HasNebula = true;
-
-                string dir = Path.GetDirectoryName(typeof(MP).Assembly.Location);
-                if (string.IsNullOrEmpty(dir))
-                    return;
-
-                // 用 .bin 后缀：BepInEx 不会把子模块当成插件去扫描，
-                // 没装 Nebula 时它连碰都不会被碰到。
-                string path = Path.Combine(dir, "DSPEnergyHub.Nebula.bin");
-                if (!File.Exists(path))
-                    return;
-
-                Assembly asm = Assembly.Load(File.ReadAllBytes(path));
-                Type bridge = asm.GetType("EnergyHub.Nebula.NebulaBridge", false);
-                if (bridge == null)
-                    return;
-
-                MethodInfo init = bridge.GetMethod("Init", BindingFlags.Public | BindingFlags.Static);
-                _mActive = bridge.GetMethod("IsActive", BindingFlags.Public | BindingFlags.Static);
-                _mIsClient = bridge.GetMethod("IsClient", BindingFlags.Public | BindingFlags.Static);
-                _mBroadcast = bridge.GetMethod("Broadcast", BindingFlags.Public | BindingFlags.Static);
-
-                if (init == null || _mActive == null || _mIsClient == null || _mBroadcast == null)
+                catch (Exception e)
                 {
-                    Plugin.Log.LogWarning("联机子模块入口不完整，按单机运行");
-                    return;
+                    Plugin.Log.LogWarning("[联机] 请求星球 " + planetId + " 的枢纽状态失败: " + e.Message);
                 }
+            };
 
-                init.Invoke(null, null);
-                _loaded = true;
-            }
-            catch (Exception e)
+            // 包到的时候工厂还没加载完，先存着，等 OnPlanetLoadFinished 再落地。
+            NebulaModAPI.OnPlanetLoadFinished += planetId =>
             {
-                Plugin.Log.LogWarning("加载联机子模块失败（按单机运行）: " + e.Message);
+                if (!IsClient)
+                    return;
+                HubManager.FlushPendingPlanet(planetId);
+            };
+
+            Plugin.Log.LogInfo("联机层就绪（NebulaAPI 官方接口）：主机结算 + 客户端回放，状态 " + StatusText);
+        }
+
+        /// <summary>本模组编译期就引用了 NebulaAPI，所以恒为 true。</summary>
+        public static bool HasNebula { get { return true; } }
+
+        /// <summary>当前是否处于联机会话中（单机时为 false）。</summary>
+        public static bool Active
+        {
+            get
+            {
+                try { return NebulaModAPI.IsMultiplayerActive; }
+                catch { return false; }
             }
         }
 
-        /// <summary>
-        /// 查找 NebulaAPI 程序集。BepInEx 会预加载 plugins 目录下的所有 dll，
-        /// 所以正常情况下它已经在 AppDomain 里；找不到就说明玩家没装 Nebula。
-        /// </summary>
-        private static Assembly FindNebulaApi()
+        /// <summary>本端是否为客户端（联机且不是房主）。</summary>
+        public static bool IsClient
         {
-            Assembly[] asms = AppDomain.CurrentDomain.GetAssemblies();
-            for (int i = 0; i < asms.Length; i++)
+            get
             {
-                Assembly a = asms[i];
-                if (a == null)
-                    continue;
-                string n = a.GetName().Name;
-                if (n == "NebulaAPI")
-                    return a;
+                if (!Active)
+                    return false;
+                try { return !NebulaModAPI.MultiplayerSession.LocalPlayer.IsHost; }
+                catch { return false; }
             }
-            return null;
+        }
+
+        /// <summary>本端是否为权威端：单机恒 true，联机时只有房主是 true。</summary>
+        public static bool IsHost
+        {
+            get
+            {
+                if (!Active)
+                    return true;
+                try { return NebulaModAPI.MultiplayerSession.LocalPlayer.IsHost; }
+                catch { return true; }
+            }
+        }
+
+        /// <summary>能量结算是否在本端执行。客户端为 false（只回放主机状态）。</summary>
+        public static bool Authoritative { get { return IsHost; } }
+
+        /// <summary>是否需要把本地操作上报给主机（只有联机客户端需要）。</summary>
+        public static bool CanReport { get { return IsClient; } }
+
+        /// <summary>面板 / 日志用的一行状态。</summary>
+        public static string StatusText
+        {
+            get
+            {
+                if (!Active) return "单机";
+                return IsHost ? "联机 · 主机" : "联机 · 客户端";
+            }
+        }
+
+        /// <summary>主机向所有客户端广播；客户端向主机发送。</summary>
+        public static bool Send(HubStatePacket packet)
+        {
+            if (packet == null || !Active)
+                return false;
+            try
+            {
+                NebulaModAPI.MultiplayerSession.Network.SendPacket(packet);
+                return true;
+            }
+            catch (Exception e)
+            {
+                Plugin.Log.LogWarning("[联机] 发送枢纽状态失败: " + e.Message);
+                return false;
+            }
+        }
+
+        /// <summary>处理器收到包之后转给 HubManager（统一在一处做应用逻辑）。</summary>
+        internal static void Dispatch(byte[] data, bool fromHost, bool snapshot)
+        {
+            if (data == null || data.Length == 0)
+                return;
+            try { HubManager.OnNetData(data, fromHost, snapshot); }
+            catch (Exception e) { Plugin.Log.LogWarning("[联机] 应用枢纽状态失败: " + e.Message); }
         }
     }
 }

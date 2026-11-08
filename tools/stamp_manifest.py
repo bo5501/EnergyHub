@@ -15,13 +15,16 @@ NAME = os.environ.get("TS_PACKAGE_NAME") or "EnergyHub"
 assert re.fullmatch(r"[A-Za-z0-9_]+", NAME), "非法包名: %r" % NAME
 
 DESC = ("星际能量枢纽塔：星球间按需自动输电，内置 20 级蓄电器（100 GJ→1 PJ，封顶 50 TW），"
-        "三级增产剂提速 ×2。")
+        "三级增产剂提速 ×2。联机（Nebula）下枢纽状态双向同步：主机结算，客户端操作即改即传，"
+        "本地电网随主机充放电（配电站/电力塔显示一致）。")
 
 DEPS = [
     "xiaoye97-BepInEx-5.4.17",
     "CommonAPI-CommonAPI-1.6.7",
     "xiaoye97-LDBTool-3.0.3",
     "CommonAPI-DSPModSave-1.2.2",
+    # 联机：官方 API（不含联机本体）。装它不会强制要求 Nebula，纯单机也能正常加载。
+    "nebula-NebulaMultiplayerModApi-2.1.0",
 ]
 
 

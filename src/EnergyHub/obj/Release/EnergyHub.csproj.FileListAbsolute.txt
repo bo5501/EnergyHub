@@ -1,9 +1,7 @@
-D:\戴森球计划反编译文件\EnergyHubMod\src\EnergyHub\obj\Release\EnergyHub.csproj.AssemblyReference.cache
-D:\戴森球计划反编译文件\EnergyHubMod\src\EnergyHub\obj\Release\EnergyHub.GeneratedMSBuildEditorConfig.editorconfig
-D:\戴森球计划反编译文件\EnergyHubMod\src\EnergyHub\obj\Release\EnergyHub.AssemblyInfoInputs.cache
-D:\戴森球计划反编译文件\EnergyHubMod\src\EnergyHub\obj\Release\EnergyHub.AssemblyInfo.cs
-D:\戴森球计划反编译文件\EnergyHubMod\src\EnergyHub\obj\Release\EnergyHub.csproj.CoreCompileInputs.cache
-D:\戴森球计划反编译文件\EnergyHubMod\src\EnergyHub\bin\Release\DSPEnergyHub.dll
-D:\戴森球计划反编译文件\EnergyHubMod\src\EnergyHub\bin\Release\DSPEnergyHub.pdb
-D:\戴森球计划反编译文件\EnergyHubMod\src\EnergyHub\obj\Release\DSPEnergyHub.dll
-D:\戴森球计划反编译文件\EnergyHubMod\src\EnergyHub\obj\Release\DSPEnergyHub.pdb
+G:\py脚本\戴森球计划mod\EnergyHub-1.19.2\src\EnergyHub\bin\Release\DSPEnergyHub.dll
+G:\py脚本\戴森球计划mod\EnergyHub-1.19.2\src\EnergyHub\obj\Release\EnergyHub.csproj.AssemblyReference.cache
+G:\py脚本\戴森球计划mod\EnergyHub-1.19.2\src\EnergyHub\obj\Release\EnergyHub.GeneratedMSBuildEditorConfig.editorconfig
+G:\py脚本\戴森球计划mod\EnergyHub-1.19.2\src\EnergyHub\obj\Release\EnergyHub.AssemblyInfoInputs.cache
+G:\py脚本\戴森球计划mod\EnergyHub-1.19.2\src\EnergyHub\obj\Release\EnergyHub.AssemblyInfo.cs
+G:\py脚本\戴森球计划mod\EnergyHub-1.19.2\src\EnergyHub\obj\Release\EnergyHub.csproj.CoreCompileInputs.cache
+G:\py脚本\戴森球计划mod\EnergyHub-1.19.2\src\EnergyHub\obj\Release\DSPEnergyHub.dll

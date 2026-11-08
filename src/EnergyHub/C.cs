@@ -18,7 +18,7 @@ namespace EnergyHub
     {
         public const string Guid = "com.energyhub.dsp";
         public const string Name = "星际能量枢纽塔";
-        public const string Version = "1.19.2";
+        public const string Version = "1.19.3";
 
         // proto id
         public const int ModelId = 666;    // 原版模型最大 id = 665
@@ -277,11 +277,18 @@ namespace EnergyHub
         public const long WarperPerEnergy = EnergyPerItem;
 
         /// <summary>
-        /// 卡槽里完全没有消耗品时的传输速率倍率。
-        /// 以前缺料是「完全停止」，玩家看不到任何动静只会以为功能坏了；
-        /// 现在缺料仍然传，只是降到一半速度、并且不扣物品（面板会红字提示「缺消耗品」）。
+        /// 卡槽里完全没有这条链路要用的消耗品时，还允许送出多少（相对本帧额度的倍率）。
+        ///
+        /// **默认 0 = 硬停**：消耗品是传能的前提条件，没料就一点能量都不送。
+        /// 早期版本在这里放了 0.5 的「免费额度」，本意是「别让玩家以为建筑坏了」，
+        /// 结果就成了「没料也能白传一半」—— 条件形同虚设，玩家一个矩阵都没放，
+        /// 塔照样以 50% 速率为电网供电。现在默认关掉，面板会明确写缺的是哪种料。
+        ///
+        /// 这是**整帧一份**的额度（见 <c>HubManager.DeliverToReceivers</c>），
+        /// 不是每台接收端一份、更不是每轮分配重新打一次折。
+        /// 想要回旧行为（半速白传）把 BepInEx 配置里的 `NoItemRate` 改成 0.5 即可。
         /// </summary>
-        public const float NoItemRate = 0.5f;
+        public static float NoItemRate = 0f;
 
         /// <summary>
         /// 特效强度的爬升 / 衰减速度（每秒，0~1）。

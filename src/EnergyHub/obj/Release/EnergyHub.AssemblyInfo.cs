@@ -13,14 +13,14 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyCompanyAttribute("EnergyHub")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Release")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+92f04b564c7b594af0f0230b324c7f6733a21cc1")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0")]
 [assembly: System.Reflection.AssemblyProductAttribute("Interstellar Energy Hub")]
 [assembly: System.Reflection.AssemblyTitleAttribute("DSPEnergyHub")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]
 [assembly: System.Reflection.AssemblyMetadata("AI_Assisted_Creation", "true")]
 [assembly: System.Reflection.AssemblyMetadata("AI_Model_Vendor", "DeepSeek")]
-[assembly: System.Reflection.AssemblyMetadata("AI_Disclosure", "Code, docs and textures generated with generative AI assistance; author directed " +
-    "design, tested and published.")]
+[assembly: System.Reflection.AssemblyMetadata("AI_Disclosure", ("Code, docs and textures generated with generative AI assistance; author directed " +
+    "design, tested and published."))]
 
 // 由 MSBuild WriteCodeFragment 类生成。
 

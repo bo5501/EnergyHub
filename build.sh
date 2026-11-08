@@ -1,39 +1,49 @@
 #!/usr/bin/env bash
 # 编译并部署到 r2modman 的 profile 目录。
+#
+# 部署产物只有一个文件：
+#   DSPEnergyHub.dll           主模块（必需）
+# 不再产/不再拷 DSPEnergyHub.pdb，也不再有 DSPEnergyHub.Nebula.bin
+# （1.19.3 起移除联机桥接子模块，Thunderstore 只接受单个插件 dll）。
+#
+# 用法：
+#   bash build.sh                    # 默认 profile = chuangshi-lianji
+#   PROFILE=/path/to/profile bash build.sh
+#   bash build.sh --no-deploy        # 只编译，不部署
 set -e
 
 ROOT="$(cd "$(dirname "$0")" && pwd)"
 SRC="$ROOT/src/EnergyHub"
-PROFILE="${PROFILE:-/c/Users/Administrator/AppData/Roaming/r2modmanPlus-local/DysonSphereProgram/profiles/lianji-mod}"
-DEST="$PROFILE/BepInEx/plugins/EnergyHub"
-DOTNET="/c/Program Files/dotnet/dotnet"
-PY="/c/Users/Administrator/AppData/Local/Python/bin/python"
+PROFILE="${PROFILE:-/c/Users/Administrator/AppData/Roaming/r2modmanPlus-local/DysonSphereProgram/profiles/chuangshi-lianji}"
+# r2modman（Thunderstore 布局）把包放在「作者-模组名/」下，dll 在里面的 EnergyHub/ 子目录
+PKG="$PROFILE/BepInEx/plugins/BOBO550-EnergyHub"
+DEST="$PKG/EnergyHub"
+DOTNET="${DOTNET:-/c/Program Files/dotnet/dotnet}"
+PY="$(command -v python || command -v python3 || echo python)"
 
-echo "== 编译（主模块）"
+if [ ! -f "$ROOT/.buildref/Managed/Assembly-CSharp.dll" ]; then
+  echo "!! 缺少 .buildref/Managed/Assembly-CSharp.dll"
+  echo "   本机没装 DSP 时，从游戏或反编译工程拷一份进来："
+  echo "     mkdir -p .buildref/Managed"
+  echo "     cp <Managed目录>/*.dll .buildref/Managed/"
+fi
+
+echo "== 编译"
 "$DOTNET" build "$SRC/EnergyHub.csproj" -c Release --nologo -v q
 
-echo "== 编译（联机子模块，可选）"
-NEBULA_SRC="$ROOT/src/EnergyHub.Nebula"
-if "$DOTNET" build "$NEBULA_SRC/EnergyHub.Nebula.csproj" -c Release --nologo -v q 2>/dev/null; then
-  NEBULA_OK=1
-else
-  NEBULA_OK=0
-  echo "   ！联机子模块编译失败（多半是没装 NebulaAPI），本次只部署主模块"
+if [ "$1" = "--no-deploy" ]; then
+  echo "== 跳过部署"
+  exit 0
 fi
 
 echo "== 部署到 $DEST"
 mkdir -p "$DEST"
+
 cp "$SRC/bin/Release/DSPEnergyHub.dll" "$DEST/"
-cp "$SRC/bin/Release/DSPEnergyHub.pdb" "$DEST/" 2>/dev/null || true
+# 调试符号与旧的联机桥接一律清掉：插件目录只留一个 dll
+rm -f "$DEST/DSPEnergyHub.pdb" "$DEST/DSPEnergyHub.Nebula.bin" "$DEST/DSPEnergyHub.Nebula.dll"
 
-if [ "$NEBULA_OK" = "1" ] && [ -f "$NEBULA_SRC/bin/Release/DSPEnergyHub.Nebula.dll" ]; then
-  # 后缀故意用 .bin：BepInEx 不会把它当插件扫描，没装 Nebula 的玩家也不会被它影响
-  cp "$NEBULA_SRC/bin/Release/DSPEnergyHub.Nebula.dll" "$DEST/DSPEnergyHub.Nebula.bin"
-else
-  rm -f "$DEST/DSPEnergyHub.Nebula.bin"
-fi
-
-"$PY" "$ROOT/tools/stamp_manifest.py" "$DEST/manifest.json" "$(grep -oP 'Version = "\K[0-9.]+' "$SRC/C.cs" | head -1)"
+"$PY" "$ROOT/tools/stamp_manifest.py" "$PKG/manifest.json" "$(grep -oP 'Version = "\K[0-9.]+' "$SRC/C.cs" | head -1)"
 
 ls -l "$DEST"
 echo "== 完成。启动游戏读取日志: $PROFILE/BepInEx/LogOutput.log"

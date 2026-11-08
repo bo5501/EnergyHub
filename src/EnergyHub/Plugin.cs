@@ -6,6 +6,7 @@ using CommonAPI;
 using CommonAPI.Systems;
 using crecheng.DSPModSave;
 using HarmonyLib;
+using NebulaAPI;
 using UnityEngine;
 using xiaoye97;
 
@@ -15,6 +16,9 @@ namespace EnergyHub
     [BepInDependency(CommonAPIPlugin.GUID)]
     [BepInDependency(LDBToolPlugin.MODGUID)]
     [BepInDependency(DSPModSavePlugin.MODGUID)]
+    // 联机：Nebula 官方 API（不是联机本体）。这个包明确写着「Does NOT require Nebula」，
+    // 纯单机玩家装着也没有副作用；Thunderstore 安装时会作为依赖自动带上。
+    [BepInDependency(NebulaModAPI.API_GUID)]
     [CommonAPISubmoduleDependency(nameof(ProtoRegistry))]
     [ModSaveSettings(LoadOrder = LoadOrder.Preload)]
     public class Plugin : BaseUnityPlugin, IModCanSave
@@ -31,9 +35,29 @@ namespace EnergyHub
             Log = Logger;
             Log.LogInfo(C.Name + " v" + C.Version + " 启动中…");
 
-            // 先装 patch：ModelProto.Preload 会重建 prefabDesc，必须在它跑之前挂上
+            // 缺料倍率：默认 0 = 卡槽里没有该链路要用的消耗品就完全不传（硬条件）。
+            // 想恢复「半速白传」的老手感，把 BepInEx/config 下本模组 cfg 里的 NoItemRate 改成 0.5 即可，
+            // 不用重新编译。
             try
             {
+                var noItem = Config.Bind("传输", "NoItemRate", C.NoItemRate,
+                    "卡槽里没有该链路要用的消耗品时，还允许送出多少（0 = 完全停机，默认；0.5 = 半速白传）。");
+                C.NoItemRate = Mathf.Clamp01(noItem.Value);
+                Log.LogInfo("缺料传输倍率 NoItemRate = " + C.NoItemRate +
+                            (C.NoItemRate <= 0f ? "（硬停：没料不传能）" : "（缺料仍按此倍率白传）"));
+            }
+            catch (Exception e)
+            {
+                Log.LogWarning("读取配置失败: " + e.Message);
+            }
+
+            // 联机（1.19.5）：注册枢纽状态包、挂「进星球拉快照」的回调。
+            // 单机时这些回调不会触发，行为与以前完全一致。
+            try { MP.Init(); }
+            catch (Exception e) { Log.LogWarning("联机兼容层初始化失败（按单机运行）: " + e.Message); }
+
+            // 先装 patch：ModelProto.Preload 会重建 prefabDesc，必须在它跑之前挂上
+            try            {
                 _harmony = new Harmony(C.Guid);
                 _harmony.PatchAll(typeof(Plugin).Assembly);
                 int n = 0;
@@ -47,7 +71,13 @@ namespace EnergyHub
 
             // 单独装：结构体方法补丁失败时不要连累其它 patch
             if (_harmony != null)
+            {
                 Patch_ExcBeltUpdate.Apply(_harmony);
+
+                // 兼容修复：联机（Nebula/Nebulae）或槽位 mod 改了物流清单尺寸却没重算
+                // 索引表时，打开面板会 IndexOutOfRange。这里在面板刷新前把表重建好。
+                Patch_DeliveryPanelGuard.Apply(_harmony);
+            }
 
             try
             {

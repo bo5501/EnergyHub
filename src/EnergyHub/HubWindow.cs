@@ -31,11 +31,16 @@ namespace EnergyHub
 
         private RectTransform _root;
         private Text _title;
+        private Text _netTag;
         private Text _gridText;
         private Text _poolText;
         private Text _rateText;
         private Text _totalText;
         private Text _pendingText;
+        /// <summary>接收端专用：显示「发送端卡槽」有没有传能耗材、还剩多少（1.19.3）。</summary>
+        private Text _peerStockText;
+        /// <summary>缺料时的那句提示（请对方放什么才能传能）。</summary>
+        private Text _peerHintText;
         /// <summary>消耗品卡槽区（仅发送能量模式显示）：分隔线 / 区块标题。</summary>
         private Image _slotLine;
         private Text _slotTitle;
@@ -180,6 +185,9 @@ namespace EnergyHub
 
             _title = UI.Label(_root, "title", "星际能量枢纽塔", 34f, 6f, 460f, 40f,
                 Skin.TitleSize > 0 ? Skin.TitleSize : 20, Skin.TitleColor);
+
+            // 1.19.5：标题旁显示当前联机角色（单机 / 联机 · 主机 / 联机 · 客户端）
+            _netTag = UI.Label(_root, "netTag", MP.StatusText, 178f, 22f, 300f, 18f, 12, Skin.DimColor);
             if (Skin.CloseTemplate != null)
             {
                 // 原版关闭按钮整件克隆：外观（底图/×图标/悬停变色/按压缩放）与原版分毫不差，
@@ -321,6 +329,14 @@ namespace EnergyHub
             _pendingText = UI.Label(_root, "pending", "-", 320f, 544f, 280f, 24f, 12, Skin.DimColor,
                 TextAnchor.MiddleRight);
 
+            // 接收端专用：显示发送端卡槽的存量（发送端每 0.2 秒同步一次快照）。
+            // 位置借用发送端卡槽区那一块 —— 接收模式整块收起，这里正好空着。
+            _peerStockText = UI.Label(_root, "peerStock", "", 28f, 548f, 592f, 24f, 13, Skin.TextColor);
+            _peerHintText = UI.Label(_root, "peerHint", "", 34f, 580f, 566f, 46f, 12, Skin.WarnColor);
+            _peerHintText.horizontalOverflow = HorizontalWrapMode.Wrap;
+            _peerHintText.verticalOverflow = VerticalWrapMode.Overflow;
+            _peerHintText.alignment = TextAnchor.UpperLeft;
+
             _cells.Add(BuildCell(Items.InformationMatrix, false, "同星系", 566f));
             _cells.Add(BuildCell(ItemProto.kWarperId, false, "跨星系", 594f));
             _cells.Add(BuildCell(Items.PrimaryLens, true, "跨星系", 622f));
@@ -445,6 +461,8 @@ namespace EnergyHub
             if (m != HubMode.Receive && info.peerPlanetId >= 0)
                 HubManager.Disconnect(info);
             _page = 0;
+            // 联机：客户端改完把这一台的状态上报给主机（单机 / 主机端是空操作）
+            HubManager.ReportState(info);
             Refresh(true);
         }
 
@@ -489,6 +507,7 @@ namespace EnergyHub
                                    "（对端已不是「发送能量」状态，mode=" + HubManager.PeekMode(p.planetId, p.entityId) + "）");
                 UIRealtimeTip.Popup("连接失败：该终端已不是「发送能量」状态");
             }
+            HubManager.ReportState(info);
             Refresh(true);
         }
 
@@ -531,14 +550,20 @@ namespace EnergyHub
             // 升级格「投入全部」：把背包里现有的全投进去（HubManager 会按当前等级需求封顶）
             int want = cell.isUpgrade ? Math.Max(n, HubManager.BagCount(cell.itemId)) : n;
 
-            int added = cell.isUpgrade
+            // 联机客户端：升级材料也走「放进卡槽」这条路，由主机吸收进进度池。
+            // 走 InvestUpgrade 会直接改客户端的进度池，和主机那份对不上（等于凭空多出材料）。
+            bool asSlot = cell.isUpgrade && MP.CanReport;
+
+            int added = cell.isUpgrade && !asSlot
                 ? HubManager.InvestUpgrade(info, factory, ed.storageId, cell.itemId, want)
                 : cell.isLens
                     ? HubManager.AddLens(factory, ed.storageId, n)
-                    : HubManager.AddItem(factory, ed.storageId, cell.itemId, n);
+                    : HubManager.AddItem(factory, ed.storageId, cell.itemId, want);
 
             if (added > 0)
             {
+                // 联机：把这一笔变动报给主机（主机按增量往它的卡槽里补/扣）
+                HubManager.NoteSlotDelta(info, cell.itemId, cell.isLens, added);
                 UIRealtimeTip.Popup((cell.isUpgrade ? "已投入" : "已放入") + label + " ×" + added);
             }
             else if (cell.isUpgrade)
@@ -563,6 +588,7 @@ namespace EnergyHub
                                          " 卡槽余量=" + HubManager.SlotRoom(factory, ed.storageId, cell.itemId)) +
                                    " | " + Items.Summary);
             }
+            HubManager.ReportState(info);
             Refresh(true);
         }
 
@@ -585,6 +611,7 @@ namespace EnergyHub
                 UIRealtimeTip.Popup(msg);
             else
                 UIRealtimeTip.Popup("升级失败：" + msg);
+            HubManager.ReportState(info);
             Refresh(true);
         }
 
@@ -601,10 +628,26 @@ namespace EnergyHub
             // 升级格：把「已投入进度池」的材料退回背包（卡槽里那点由 tick 自动吸收，取不出来）
             if (cell.isUpgrade)
             {
+                // 联机客户端：进度池在主机那边，客户端只能取回「还留在卡槽里」的那部分
+                if (MP.CanReport)
+                {
+                    int mine = HubManager.TakeItem(factory, ed.storageId, cell.itemId);
+                    UIRealtimeTip.Popup(mine > 0 ? "已取回" + label + " ×" + mine : "卡槽里没有" + label);
+                    if (info != null)
+                    {
+                        HubManager.NoteSlotDelta(info, cell.itemId, false, -mine);
+                        HubManager.ReportState(info);
+                    }
+                    Refresh(true);
+                    return;
+                }
+
                 int back = info != null
                     ? HubManager.RefundUpgrade(info, factory, ed.storageId, cell.itemId)
                     : 0;
                 UIRealtimeTip.Popup(back > 0 ? "已退回" + label + " ×" + back : "还没有投入" + label);
+                if (info != null)
+                    HubManager.ReportState(info);
                 Refresh(true);
                 return;
             }
@@ -613,7 +656,12 @@ namespace EnergyHub
                 ? HubManager.TakeLens(factory, ed.storageId)
                 : HubManager.TakeItem(factory, ed.storageId, cell.itemId);
 
+            if (got > 0 && info != null)
+                HubManager.NoteSlotDelta(info, cell.itemId, cell.isLens, -got);
+
             UIRealtimeTip.Popup(got > 0 ? "已取回" + label + " ×" + got : "卡槽里没有这种物品");
+            if (info != null)
+                HubManager.ReportState(info);
             Refresh(true);
         }
 
@@ -643,6 +691,15 @@ namespace EnergyHub
         private void Update()
         {
             if (!gameObject.activeSelf) return;
+
+            // 退到主菜单：DSP 只销毁 GameMain、UIRoot 是复用的，
+            // 本窗口挂在 overlayCanvas 下不会跟着消失 —— 不主动收起来就会残留成
+            // 主菜单上的一个「星际能量枢纽塔」面板。加载新存档的瞬间同样适用。
+            if (GameMain.data == null || GameMain.localPlanet == null)
+            {
+                CloseIfOpen();
+                return;
+            }
 
             // 玩家按 E 打开背包时自动关闭本窗口（其它界面不关）
             if (InventoryOpen())
@@ -686,6 +743,8 @@ namespace EnergyHub
             }
             PowerExchangerComponent exc = ps.excPool[ed.powerExcId];
             bool powered = exc.networkId > 0;
+            if (_netTag != null)
+                _netTag.text = MP.StatusText;
 
             // 电网
             _gridText.text = powered
@@ -694,7 +753,12 @@ namespace EnergyHub
             _gridText.color = powered ? Skin.TextColor : Skin.WarnColor;
 
             // 能量池
-            float ratio = exc.maxPoolEnergy > 0 ? (float)exc.currPoolEnergy / exc.maxPoolEnergy : 0f;
+            // 1.19.7：联机客户端本地也跑电网结算（为了让本地电网知道这台机器在充/放电），
+            // exc.currPoolEnergy 可能被原版改掉一两个 tick 的量。显示一律用主机广播的值。
+            long showPool = MP.Authoritative
+                ? exc.currPoolEnergy
+                : Math.Min(info.cachedPool, Math.Max(exc.maxPoolEnergy, 0L));
+            float ratio = exc.maxPoolEnergy > 0 ? (float)showPool / exc.maxPoolEnergy : 0f;
             ratio = Mathf.Clamp01(ratio);
             if (_poolFill.type == Image.Type.Filled)
                 _poolFill.fillAmount = ratio;
@@ -703,11 +767,11 @@ namespace EnergyHub
             _poolFill.color = Color.Lerp(Skin.WarnColor, Skin.AccentColor, ratio);
             // 当前储量 / 总容量（1.10.0）：池子容量随等级从 100 GJ 涨到 1 PJ，
             // 只显示百分比看不出「存了多少、还能存多少」，所以两个数一起给。
-            _poolText.text = UI.FmtEnergy(exc.currPoolEnergy) + " / " + UI.FmtEnergy(exc.maxPoolEnergy) +
+            _poolText.text = UI.FmtEnergy(showPool) + " / " + UI.FmtEnergy(exc.maxPoolEnergy) +
                              "  " + Mathf.RoundToInt(ratio * 100f) + "%";
 
             // 充能 / 放能功率（原版 powerTextValue1/2 的做法：per-tick × 60 = 每秒瓦特）
-            long perTick = exc.currEnergyPerTick;
+            long perTick = MP.Authoritative ? exc.currEnergyPerTick : info.netExcPerTick;
             _chargeText.text = perTick > 0 ? UI.FmtPower(perTick * 60L) : "0";
             _dischargeText.text = perTick < 0 ? UI.FmtPower(-perTick * 60L) : "0";
             Color pc = powered && perTick != 0 ? Skin.OkColor : Skin.WarnColor;
@@ -756,6 +820,7 @@ namespace EnergyHub
             }
 
             RefreshLinkText(info, mode);
+            RefreshPeerStock(info, mode);
 
             // 速率
             switch (mode)
@@ -776,9 +841,14 @@ namespace EnergyHub
                     }
                     else
                     {
-                        // 提速时把倍率写进速率行（文案控制在一行内，宽 320 px）
+                        // 消耗品是真条件了：缺料时要么按料限速、要么直接停，
+                        // 两种状态要分开写，否则玩家看到「0 W + 降速」会以为是 bug。
+                        // 文案里带上缺的具体是哪种料（矩阵 / 翘曲器+透镜），玩家才知道补什么。
+                        string need = info.starveNeed ?? "耗材";
                         _rateText.text = info.itemStarved
-                            ? "传输速率  " + UI.FmtPower(info.ratePerSecond) + "  ⚠ 缺耗材·降速"
+                            ? (info.ratePerSecond < 1f
+                                ? "传输速率  0 W    ⚠ 缺" + need + "·已停机"
+                                : "传输速率  " + UI.FmtPower(info.ratePerSecond) + "  ⚠ 缺" + need + "·限速")
                             : info.boostActive
                                 ? "传输速率  " + UI.FmtPower(info.ratePerSecond) + "（提速×" + C.BoostRate + "）"
                                 : "传输速率  " + UI.FmtPower(info.ratePerSecond) + "    →  " + info.receiverCount + " 条链路";
@@ -1037,6 +1107,64 @@ namespace EnergyHub
                     _linkText.color = Skin.DimColor;
                     break;
             }
+        }
+
+        /// <summary>
+        /// 接收端专用：把「发送端卡槽」的存货画出来（1.19.3）。
+        ///
+        /// 卡槽在发送端身上，接收端的窗口里本来是看不到的 —— 玩家只看到「已对接，但 0 W」，
+        /// 分不清是对方没料、自己没通电、还是电网满。发送端每 0.2 秒把存量写进接收端的
+        /// <see cref="HubInfo"/>（见 <c>HubManager.PublishStock</c>），这里负责展示：
+        ///   · 有货 → 绿字「发送端卡槽  信息矩阵 × 12（同星系链路）」；
+        ///   · 没货 → 红字 + 一句「请让发送端放入「信息矩阵」，才可以使用能量传输系统」；
+        ///   · 快照过期（发送端所在星球没加载 / 对端没在发送）→ 灰字「未同步」。
+        /// </summary>
+        private void RefreshPeerStock(HubInfo info, HubMode mode)
+        {
+            bool show = mode == HubMode.Receive && info != null &&
+                        info.peerPlanetId >= 0 && info.peerEntityId > 0;
+
+            if (_peerStockText != null && _peerStockText.gameObject.activeSelf != show)
+                _peerStockText.gameObject.SetActive(show);
+            if (_peerHintText != null && _peerHintText.gameObject.activeSelf != show)
+                _peerHintText.gameObject.SetActive(show);
+            if (!show)
+                return;
+
+            bool sameStar, crossStar;
+            HubManager.LinkUsage(info, out sameStar, out crossStar);
+            bool cross = crossStar;
+
+            bool fresh = info.peerStockStamp > 0f && Time.time - info.peerStockStamp <= 6f;
+            if (!fresh)
+            {
+                _peerStockText.text = "发送端卡槽  未同步（发送端所在星球未加载，或对方没在发送状态）";
+                _peerStockText.color = Skin.DimColor;
+                _peerHintText.text = "";
+                return;
+            }
+
+            if (cross)
+            {
+                int w = info.peerStockWarper;
+                int l = info.peerStockLens;
+                bool ok = w > 0 && l > 0;
+                _peerStockText.text = "发送端卡槽  空间翘曲器 × " + w + "    引力透镜 × " + l + "（跨星系链路）";
+                _peerStockText.color = ok ? Skin.OkColor : Skin.WarnColor;
+                _peerHintText.text = ok
+                    ? ""
+                    : "⚠ 请让发送端放入「空间翘曲器 + 引力透镜」，才可以使用能量传输系统";
+            }
+            else
+            {
+                int m = info.peerStockMatrix;
+                _peerStockText.text = "发送端卡槽  信息矩阵 × " + m + "（同星系链路）";
+                _peerStockText.color = m > 0 ? Skin.OkColor : Skin.WarnColor;
+                _peerHintText.text = m > 0
+                    ? ""
+                    : "⚠ 请让发送端放入「信息矩阵」，才可以使用能量传输系统";
+            }
+            _peerHintText.color = Skin.WarnColor;
         }
 
         /// <summary>

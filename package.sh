@@ -1,15 +1,30 @@
 #!/usr/bin/env bash
 # 打 Thunderstore 发布包：编译 → 图标 → 组装 → zip。
-# 产物：dist/EnergyHubTower-<version>.zip
+# 产物：dist/EnergyHub-<version>.zip
+#
+# 1.19.3 起包内插件目录只有一个 DSPEnergyHub.dll：
+#   · 不再有 DSPEnergyHub.Nebula.bin（联机桥接子模块已移除，审核不接受 .bin）
+#   · 不再有 .pdb
 set -e
 
 ROOT="$(cd "$(dirname "$0")" && pwd)"
 PKG="$ROOT/dist/EnergyHub"
-# 包名默认换回原始 listing 的 EnergyHub（版主解锁后上传才能更新原条目，而不是再开一条新包）
+# 包名默认用原始 listing 的 EnergyHub（版主解锁后上传才能更新原条目，而不是再开一条新包）
 # 要走改名方案时才用： TS_PACKAGE_NAME=EnergyHubTower ./package.sh
 PKGNAME="${TS_PACKAGE_NAME:-EnergyHub}"
 VERSION="$(grep -oP 'Version = "\K[0-9.]+' "$ROOT/src/EnergyHub/C.cs" | head -1)"
-PY="/c/Users/Administrator/AppData/Local/Python/bin/python"
+
+# 选一个装了 Pillow 的解释器（图标生成与校验都要用 PIL）
+pick_py() {
+  for p in "${PYTHON:-}" "$(command -v python)" "$(command -v python3)" \
+           /d/Python/Python312/python /c/Python312/python; do
+    [ -n "$p" ] || continue
+    if "$p" -c "import PIL" >/dev/null 2>&1; then echo "$p"; return; fi
+  done
+  echo python
+}
+PY="$(pick_py)"
+echo "== Python: $PY"
 
 echo "== 版本 $VERSION / 包名 $PKGNAME"
 
@@ -18,26 +33,28 @@ DOTNET="/c/Program Files/dotnet/dotnet"
 echo "== 编译"
 "$DOTNET" build "$ROOT/src/EnergyHub/EnergyHub.csproj" -c Release --nologo -v q
 
-# 1.19.0 起不再打包联机子模块：包里只发 DSPEnergyHub.dll。
-# src/EnergyHub.Nebula 源码仍保留在仓库里（想恢复联机就把它重新编回 .bin），但发布包不含它。
+# 2) 清空包目录（放到生成图标之前，避免上一版残留的 .bin/.pdb 被打进 zip；图标会重新生成）
+echo "== 清空 $PKG"
+rm -rf "$PKG"
+mkdir -p "$PKG/BepInEx/plugins/EnergyHub"
 
-# 2) 图标（256x256 PNG）
+# 3) 图标（256x256 PNG）
 "$PY" "$ROOT/tools/make_icon.py"
 
-# 3) 组装包目录
-mkdir -p "$PKG/BepInEx/plugins/EnergyHub"
+# 3.5) 拷 dll
 cp "$ROOT/src/EnergyHub/bin/Release/DSPEnergyHub.dll" "$PKG/BepInEx/plugins/EnergyHub/"
-# README 的源头是 docs/README-thunderstore.md（入库版本化；dist/ 被 gitignore）
-cp "$ROOT/docs/README-thunderstore.md" "$PKG/README.md"
-# 只发 dll：pdb 是调试符号，对玩家没用还占体积
 
-# 确保打包目录里没有上一版残留的联机子模块
-rm -f "$PKG/BepInEx/plugins/EnergyHub/DSPEnergyHub.Nebula.bin"
+# README：优先用 docs 里的玩家版，没有就用仓库 README
+if [ -f "$ROOT/docs/README-thunderstore.md" ]; then
+  cp "$ROOT/docs/README-thunderstore.md" "$PKG/README.md"
+else
+  cp "$ROOT/README.md" "$PKG/README.md"
+fi
 
 # 3.5) manifest：版本号与短描述统一由 tools/stamp_manifest.py 生成，避免每版手改漏字段
 "$PY" "$ROOT/tools/stamp_manifest.py" "$PKG/manifest.json" "$VERSION"
 
-# 4) 校验：manifest 版本 / 图标尺寸 / 文件齐全
+# 4) 校验：manifest 版本 / 图标尺寸 / 插件目录只允许一个 dll
 "$PY" - "$PKG" "$VERSION" "$PKGNAME" <<'PY'
 import json, os, sys
 from PIL import Image
@@ -50,10 +67,11 @@ for f in need:
     assert os.path.isfile(p), "缺文件: " + f
     print("  ok  %-46s %8d B" % (f, os.path.getsize(p)))
 
-# 1.19.0 起明确不发联机子模块：包里出现任何 .bin 都算错误
-neb = os.path.join(pkg, "BepInEx/plugins/EnergyHub/DSPEnergyHub.Nebula.bin")
-assert not os.path.isfile(neb), "包内不应再有联机子模块 .bin"
-print("  ok  %-46s 不存在（1.19.0 起移除）" % "BepInEx/plugins/EnergyHub/*.bin")
+# 插件目录必须只有 DSPEnergyHub.dll —— 多出 .bin/.pdb/第二个 dll 会被 Thunderstore 审核打回
+plug = os.path.join(pkg, "BepInEx/plugins/EnergyHub")
+names = sorted(os.listdir(plug))
+assert names == ["DSPEnergyHub.dll"], "插件目录只应有 DSPEnergyHub.dll，实际: %r" % (names,)
+print("  ok  %-46s %s" % ("BepInEx/plugins/EnergyHub/", names[0]))
 
 m = json.load(open(os.path.join(pkg, "manifest.json"), encoding="utf-8"))
 assert m["name"] == pkgname, (m["name"], pkgname)

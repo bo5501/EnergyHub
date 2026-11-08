@@ -10,7 +10,11 @@
     <Product>Interstellar Energy Hub</Product>
     <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
     <GenerateAssemblyInfo>true</GenerateAssemblyInfo>
-    <DebugType>portable</DebugType>
+    <!-- 部署/发布只留 DSPEnergyHub.dll，不再产 .pdb。
+         Debug 配置仍保留符号，方便本地附加调试。 -->
+    <DebugType Condition="'$(Configuration)'=='Release'">none</DebugType>
+    <DebugType Condition="'$(Configuration)'!='Release'">portable</DebugType>
+    <DebugSymbols Condition="'$(Configuration)'=='Release'">false</DebugSymbols>
     <NoWarn>CS0436;CS0618;CS0649;CS0169</NoWarn>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
   </PropertyGroup>
@@ -19,9 +23,14 @@
        dotnet build -p:GameDir="D:\Steam\steamapps\common\Dyson Sphere Program" -->
   <PropertyGroup>
     <GameDir Condition="'$(GameDir)'==''">D:\Program Files (x86)\Steam\steamapps\common\Dyson Sphere Program</GameDir>
-    <ManagedDir>$(GameDir)\DSPGAME_Data\Managed</ManagedDir>
+    <!-- 引用来源优先级：
+         1. 命令行 -p:ManagedDir=...
+         2. 游戏安装目录 $(GameDir)\DSPGAME_Data\Managed
+         3. 仓库内 .buildref\Managed（本机没装游戏时的离线编译引用，见 build.sh） -->
+    <ManagedDir Condition="'$(ManagedDir)'=='' AND Exists('$(GameDir)\DSPGAME_Data\Managed\Assembly-CSharp.dll')">$(GameDir)\DSPGAME_Data\Managed</ManagedDir>
+    <ManagedDir Condition="'$(ManagedDir)'=='' AND Exists('$(MSBuildProjectDirectory)\..\..\.buildref\Managed\Assembly-CSharp.dll')">$(MSBuildProjectDirectory)\..\..\.buildref\Managed</ManagedDir>
     <!-- r2modman profile（BepInEx / Harmony / CommonAPI / LDBTool / DSPModSave 的引用来源） -->
-    <ProfileDir Condition="'$(ProfileDir)'==''">$(APPDATA)\r2modmanPlus-local\DysonSphereProgram\profiles\lianji-mod\BepInEx</ProfileDir>
+    <ProfileDir Condition="'$(ProfileDir)'==''">$(APPDATA)\r2modmanPlus-local\DysonSphereProgram\profiles\chuangshi-lianji\BepInEx</ProfileDir>
   </PropertyGroup>
 
   <ItemGroup>
@@ -89,6 +98,13 @@
 
   <ItemGroup>
     <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies" Version="1.0.3" PrivateAssets="all" />
+    <!-- 联机：Nebula 官方 API（和创世之书同款）。
+         只编译期引用，ExcludeAssets=runtime 保证 NebulaAPI.dll 不会被拷进发布包 ——
+         玩家从 Thunderstore 装本模组时会自动带上 NebulaMultiplayerModApi 依赖包。 -->
+    <PackageReference Include="DysonSphereProgram.Modding.NebulaMultiplayerModApi" Version="2.1.0">
+      <ExcludeAssets>runtime</ExcludeAssets>
+      <PrivateAssets>all</PrivateAssets>
+    </PackageReference>
   </ItemGroup>
 
   <!-- AI 使用披露（Thunderstore 合规）：写进程序集元数据，审核与用户都能直接查
