@@ -174,6 +174,17 @@ namespace EnergyHub
                 Plugin.Log.LogWarning("科技节点布置失败: " + e);
             }
 
+            // 1.21.0：能量池研究节点（升级页）。必须排在 Tech.Layout 之后：
+            // 它要把「解锁本建筑的那条科技」当成前置。
+            try
+            {
+                PoolTech.Layout();
+            }
+            catch (System.Exception e)
+            {
+                Plugin.Log.LogWarning("能量池科技节点布置失败: " + e);
+            }
+
             // 兜底：科技节点确实排不出来（找不到锚点 / 没空闲 id / 异常）时，
             // 把物品改回「永远解锁」，否则配方永远锁着，玩家造不出建筑 ——
             // 那比「解锁少一个科技节点」严重得多。
@@ -189,6 +200,7 @@ namespace EnergyHub
             if (item != null)
             {
                 ApplyIcon(item);                // 配方 Preload 会继承物品图标
+                ResolveBuildIndex(item);        // 1.20.0：挂到「电力」页的 F10
                 try
                 {
                     item.Preload(IndexOf(items.dataArray, item));
@@ -261,6 +273,246 @@ namespace EnergyHub
             }
 
             Plugin.Log.LogInfo("mod proto 预加载完成");
+        }
+
+        // ---------------- 建造栏位置（1.20.0） ----------------
+
+        /// <summary>
+        /// 把本建筑挂到建造栏「电力」页的 F10（1.20.0）。
+        ///
+        /// <c>BuildIndex = 页 × 100 + 槽位</c>，而槽位就是 F 键号（原版分拣器 = 307 → 第 3 页 F7）。
+        /// 页码**不能写死**：不同游戏版本、不同 mod 组合下「电力」页的编号会变
+        /// （以前这里写死 607，结果建筑落在别的页签里，玩家得逐个页翻）。
+        /// 所以拿原版「蓄电器」（<see cref="C.BuildIndexAnchor"/>，一定在电力页）当锚点取页码，
+        /// 再在页内找 F10；F10 被占就向两侧找最近的空槽。
+        /// </summary>
+        internal static void ResolveBuildIndex(ItemProto item)
+        {
+            if (item == null)
+                return;
+
+            ItemProto anchor = null;
+            try { anchor = LDB.items != null ? LDB.items.Select(C.BuildIndexAnchor) : null; }
+            catch { anchor = null; }
+
+            int page = anchor != null && anchor.BuildIndex > 0 ? anchor.BuildIndex / 100 : 0;
+            if (page <= 0)
+            {
+                item.BuildIndex = C.BuildIndex;
+                C.ResolvedBuildIndex = C.BuildIndex;
+                Plugin.Log.LogWarning("建造栏：拿不到蓄电器锚点，退回写死的 BuildIndex=" + C.BuildIndex);
+                return;
+            }
+
+            int chosen = -1;
+            // 0, +1, -1, +2, -2 … 先试 F10，再往两边找
+            for (int k = 0; k < 12; k++)
+            {
+                int s = C.BuildIndexSlot + ((k % 2 == 0) ? (k / 2) : (-(k + 1) / 2));
+                if (s < 1 || s > 12)
+                    continue;
+                if (Occupied(page * 100 + s))
+                    continue;
+                chosen = s;
+                break;
+            }
+
+            if (chosen < 0)
+            {
+                item.BuildIndex = C.BuildIndex;
+                C.ResolvedBuildIndex = C.BuildIndex;
+                Plugin.Log.LogWarning("建造栏：电力页 1~12 槽全被占，退回写死的 BuildIndex=" + C.BuildIndex);
+                return;
+            }
+
+            item.BuildIndex = page * 100 + chosen;
+            C.ResolvedBuildIndex = item.BuildIndex;
+            Plugin.Log.LogInfo("建造栏：电力页 = 第 " + page + " 页，槽位 = F" + chosen +
+                               "（BuildIndex=" + item.BuildIndex + "，锚点蓄电器=" + anchor.BuildIndex + "）");
+        }
+
+        /// <summary>
+        /// 建造栏「事后落位」（1.21.0）：直接把 <c>UIBuildMenu.protos[页, 槽]</c> 写成我们的物品。
+        ///
+        /// 为什么不能只靠改 <c>item.BuildIndex</c>：
+        ///   · <c>StaticLoad</c> 只跑一次（staticLoaded），跑在我们前面时改字段根本读不到；
+        ///   · 同一页同槽被两个物品声明时，dataArray 里靠后的会覆盖前面的 ——
+        ///     我们在建表阶段挑的「空槽」，之后可能被别的 MOD 塞进来的物品顶掉。
+        ///
+        /// 这里按「当刻的真实占用」重算槽位（优先 F10），清掉本物品在其它格子里的残留，
+        /// 再把它写进目标格，并把 <c>BuildIndex</c> 同步回去（保持数据一致）。
+        /// 重复调用是安全的：位置没变就直接返回，不刷日志。
+        /// </summary>
+        /// <summary>
+        /// 建造栏位子的「延迟补偿」（1.21.0）。
+        ///
+        /// <see cref="FinalizeBuildSlot"/> 有两个触发点：<c>StaticLoad</c> 的 Postfix，和这里的两次延时调用。
+        /// 三种先后顺序都能覆盖：
+        ///   · StaticLoad 跑在补丁之后 → Postfix 落位；
+        ///   · StaticLoad 跑在补丁之前（别的 MOD / 提前创建的 UI 先跑掉了）→ 这里的第一次延时调用来补；
+        ///   · 落位时锚点物品还没就绪 → 第二次延时再补一次。
+        /// 只跑两次，之后不再打扰。
+        /// </summary>
+        private static float _slotTimer;
+        private static int _slotTries;
+
+        internal static void TickBuildSlot()
+        {
+            if (!_preloaded || _slotTries >= 2)
+                return;
+            _slotTimer += Time.deltaTime;
+            if (_slotTimer < (_slotTries == 0 ? 2f : 6f))
+                return;
+            _slotTimer = 0f;
+            _slotTries++;
+            try { FinalizeBuildSlot(); }
+            catch (System.Exception e) { Plugin.Log.LogWarning("建造栏：延时落位失败: " + e.Message); }
+        }
+
+        internal static void FinalizeBuildSlot()
+        {
+            ItemProto item = FindItem();
+            if (item == null)
+                return;
+            var set = LDB.items;
+            if (set == null || set.dataArray == null)
+                return;
+
+            // ---- 页：原版「蓄电器」一定在电力页；拿不到就用能量枢纽（2209）；再不行用当前值 ----
+            int page = PageOf(C.BuildIndexAnchor);
+            if (page <= 0)
+                page = PageOf(2209);
+            if (page <= 0)
+                page = item.BuildIndex / 100;
+            if (page <= 0 || page > 15)
+                page = System.Math.Max(1, System.Math.Min(15, C.BuildIndex / 100));
+
+            // ---- 该页的真实占用（排除自己）----
+            var used = new bool[13];
+            ItemProto[] arr = set.dataArray;
+            for (int i = 0; i < arr.Length; i++)
+            {
+                ItemProto p = arr[i];
+                if (p == null || p.ID == C.ItemId || p.BuildIndex <= 0)
+                    continue;
+                if (p.BuildIndex / 100 != page)
+                    continue;
+                int sl = p.BuildIndex % 100;
+                if (sl >= 0 && sl < used.Length)
+                    used[sl] = true;
+            }
+
+            // ---- 槽：优先 F10，然后往两边找最近的空槽；实在没空位就退回 F10 ----
+            int slot = -1;
+            int[] prefer = { 10, 9, 11, 8, 12, 7, 6, 5, 4, 3, 2, 1 };
+            for (int i = 0; i < prefer.Length; i++)
+            {
+                int s2 = prefer[i];
+                if (s2 < used.Length && !used[s2])
+                {
+                    slot = s2;
+                    break;
+                }
+            }
+            if (slot < 0)
+                slot = C.BuildIndexSlot;
+
+            int buildIndex = page * 100 + slot;
+            bool moved = item.BuildIndex != buildIndex;
+            item.BuildIndex = buildIndex;
+            C.ResolvedBuildIndex = buildIndex;
+
+            // ---- 写表：先清残留，再落位 ----
+            ItemProto[,] protos = ProtosTable();
+            if (protos == null)
+                return;
+
+            for (int p = 0; p < protos.GetLength(0); p++)
+            {
+                for (int s2 = 0; s2 < protos.GetLength(1); s2++)
+                {
+                    ItemProto cur = protos[p, s2];
+                    if (cur != null && cur.ID == C.ItemId)
+                        protos[p, s2] = null;
+                }
+            }
+            if (page < protos.GetLength(0) && slot < protos.GetLength(1))
+                protos[page, slot] = item;
+
+            if (!moved && _placed == buildIndex)
+                return;
+            _placed = buildIndex;
+
+            Plugin.Log.LogInfo("建造栏落位：电力页 = 第 " + page + " 页，槽位 = F" + slot +
+                               "（BuildIndex=" + buildIndex + "，" +
+                               "该页已用槽=" + UsedSlots(used) + "）" +
+                               " 图标=" + (item.iconSprite != null ? "ok" : "缺失") +
+                               " 名称=" + (string.IsNullOrEmpty(item.name) ? "空" : item.name));
+        }
+
+        /// <summary>上一次落位的 BuildIndex（避免每次 StaticLoad 都刷日志）。</summary>
+        private static int _placed = -1;
+
+        /// <summary>物品 BuildIndex 所在页（0 = 不在建造栏里）。</summary>
+        private static int PageOf(int itemId)
+        {
+            try
+            {
+                ItemProto p = LDB.items != null ? LDB.items.Select(itemId) : null;
+                if (p == null || p.BuildIndex <= 0)
+                    return 0;
+                return p.BuildIndex / 100;
+            }
+            catch
+            {
+                return 0;
+            }
+        }
+
+        private static string UsedSlots(bool[] used)
+        {
+            var sb = new System.Text.StringBuilder();
+            for (int i = 0; i < used.Length; i++)
+            {
+                if (!used[i])
+                    continue;
+                if (sb.Length > 0) sb.Append(',');
+                sb.Append(i);
+            }
+            return sb.Length > 0 ? sb.ToString() : "无";
+        }
+
+        /// <summary><c>UIBuildMenu.protos</c>（private static ItemProto[16, 13]）。</summary>
+        private static readonly System.Reflection.FieldInfo _protosField =
+            AccessTools.Field(typeof(UIBuildMenu), "protos");
+
+        /// <summary>取建造栏那张静态表（拿不到返回 null）。</summary>
+        private static ItemProto[,] ProtosTable()
+        {
+            try
+            {
+                return _protosField != null ? _protosField.GetValue(null) as ItemProto[,] : null;
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        /// <summary>这个 BuildIndex 是否已经被别的物品占了。</summary>
+        private static bool Occupied(int buildIndex)
+        {
+            var set = LDB.items;
+            if (set == null || set.dataArray == null)
+                return false;
+            ItemProto[] arr = set.dataArray;
+            for (int i = 0; i < arr.Length; i++)
+            {
+                ItemProto p = arr[i];
+                if (p != null && p.ID != C.ItemId && p.BuildIndex == buildIndex)
+                    return true;
+            }
+            return false;
         }
 
         private static int IndexOf<T>(T[] arr, T target) where T : class
@@ -513,57 +765,40 @@ namespace EnergyHub
             // 1.7.0：制作台 / 建造栏里显示的是这段 Description，必须把「这是干什么的」说清楚。
             // 换行在 UIItemTip 里是支持的（原版物品描述也有多行）。
             // 1.7.1：储能并入发送/接收（不再有独立储能模式），文案同步改。
+            // 1.21.5：原文案 24 行，物品提示框整屏都是字，玩家反馈「太长」。
+            // 改成 9 行、一句一个要点：只留「模式 / 传能 / 分配 / 池子 / 接口」五块，
+            // 解锁路径、90% 余量来由、升级花费明细这些都可以在科技树和面板里看到，不再重复。
             ProtoRegistry.RegisterString(C.LItemDesc,
-                "A megastructure that moves power between planets and doubles as a giant accumulator.\n" +
-                "Unlocked by the Interstellar Energy Hub research node right after Information Matrix " +
-                "(researched with Information Matrices).\n" +
-                "Modes: Idle, Send, Receive — in Send/Receive modes the pool also works as a large " +
-                "accumulator, charging on grid surplus and discharging on shortage automatically.\n" +
-                "Receivers connect to a sending unit directly; transfers consume Information Matrices " +
-                "(Space Warpers + Graviton Lenses across star systems).\n" +
-                "One sender can feed several receivers: output is split by what each receiver can " +
-                "actually absorb, so a full pool gets nothing and idle share is re-handed.\n" +
-                "Drop Proliferator Mk.III into the boost slot to double the interstellar transfer rate.\n" +
-                "The internal pool grows from 100 GJ to 1 PJ over 20 levels; the material cost steps " +
-                "up every 4 levels (" + C.UpgradeCostOf(1) + " Accumulators + " + C.UpgradeCost2Of(1) +
-                " Graviton Matrices at levels 1-4, up to " + C.UpgradeCostOf(17) + " + " +
-                C.UpgradeCost2Of(17) + " at the top tier, both required). Items fed by belt are " +
-                "accumulated into an upgrade pool, so no single delivery has to cover a whole level. " +
-                "Charge / discharge power grows with the level, capped at 50 TW.\n" +
-                "Eight belt ports at the base (4 front + 4 back) feed the consumable slots.",
-                "可在星球之间直接输送能量的巨型建筑，同时也能当一台超大容量的蓄电器使用。\n" +
-                "在科技树「能量枢纽」科技（解锁能量枢纽建筑那条）右下方一格解锁" +
-                "「星际能量枢纽塔」，节点挂在卫星配电系统正下方（研究需消耗信息矩阵）；" +
-                "找不到该节点时退回「信息矩阵」后面。解锁后才能制造与建造。\n" +
-                "\n" +
-                "【三种工作模式】\n" +
-                "· 待机：能量池保持当前电量，不参与电网充放，也不参与星际传输；\n" +
-                "· 发送：从本地电网抽电存进池子，等接收端「连接」之后把能量发出去；\n" +
-                "· 接收：连上一台发送终端后接收能量，并注入本星球电网。\n" +
-                "\n" +
-                "【内置蓄电器】发送 / 接收模式下，能量池同时是一台超大蓄电器：\n" +
-                "电网有余电时自动充电，电网缺电时自动放电，全程自动切换、无需操作。\n" +
-                "\n" +
-                "【点对点传输】接收端在自己的面板里点「连接」选定一台发送终端，" +
-                "只有真正连上的接收端才会收到能量（不会串到同星球的别的枢纽上）。\n" +
-                "同一恒星系内每 200 MJ 消耗 1 个「信息矩阵」；跨恒星系还要额外消耗" +
-                "「空间翘曲器 + 引力透镜」，都由发送端提供。\n" +
-                "\n" +
-                "【按需自动分配】一台发送端挂多台接收端时，按每台「现在能吃多少」分配：" +
-                "池子已满的端不再占份额，被在途账本或耗材卡住的份额会自动转给还有空间的端。\n" +
-                "\n" +
-                "【传输提速】卡槽里放「三级增产剂 Mk.III」，星际传输速率 ×2，" +
-                "提速期间每秒消耗 1 个，取完自动回到普通速率。\n" +
-                "\n" +
-                "【能量池升级】卡槽里放入「蓄电器」与「引力矩阵」，共 " + C.MaxPoolLevel + " 级，" +
-                "材料按阶梯递增：1~4 级每级 " + C.UpgradeCostOf(1) + " 蓄电器 + " + C.UpgradeCost2Of(1) +
-                " 引力矩阵，之后每 4 级抬高一次，最高一档 " + C.UpgradeCostOf(17) + " 蓄电器 + " +
-                C.UpgradeCost2Of(17) + " 引力矩阵（两种都要）。" +
-                "送进卡槽的材料会自动累积到升级进度池，不必一次凑齐，攒够再点升级。\n" +
-                "1 级 100 GJ，容量逐级指数增长，满级 1 PJ；" +
-                "充/放功率随容量提升（满池约 20 秒充满），功率硬顶 50 TW。\n" +
-                "\n" +
-                "【传送带接口】底座前后各有 4 个接口（共 8 个进口），消耗品可以直接用传送带送进来。");
+                "A megastructure that moves power between planets, and a giant accumulator.\n" +
+                "Level up with the repeatable \"Pool Expansion\" node on the tech tree's Upgrade page " +
+                "(Graviton Matrices only). The level is save-wide, so a rebuilt tower keeps it.\n" +
+                "Modes: Off / Battery only / Send / Receive. The last three charge from grid surplus " +
+                "(at most 90% of it) and discharge into a deficit; Battery only never transfers or " +
+                "consumes items.\n" +
+                "Send / Receive: a receiver must \"Connect\" to a sender in its panel, otherwise it " +
+                "gets nothing.\n" +
+                "Same star system: 1 GJ per item (Information Matrix). Cross-system: also 1 Space " +
+                "Warper + 1 Graviton Lens. The sender pays.\n" +
+                "+5% energy per item per level, at most " + C.MaxItemsPerSec + " items/s per link. " +
+                "No items, no transfer; receivers need nothing.\n" +
+                "One sender feeding several receivers splits output by demand; full pools get no share.\n" +
+                "Pool: 100 GJ at level 1 up to 1 PJ, full charge / discharge in about 20 s, hard cap 50 TW.\n" +
+                "Eight belt ports at the base feed the consumable slots, " +
+                C.SlotStackMax.ToString("N0") + " per slot.",
+                "可在星球之间输送能量的巨型建筑，同时是一台超大蓄电器。\n" +
+                "等级在「科技 → 升级」页研究「能量池扩容」提升（只耗引力矩阵）；" +
+                "等级是存档进度，拆建不丢。\n" +
+                "【模式】关机 / 仅蓄电 / 发送 / 接收。后三种会自动为电网充放（最多吃空闲电的 90%）；" +
+                "仅蓄电不传能、不耗料。\n" +
+                "【传能】接收端需在面板里「连接」一台发送端，没连上的收不到。\n" +
+                "同星系每个耗材换 1 GJ（信息矩阵）；跨星系再加 1 空间翘曲器 + 1 引力透镜，" +
+                "全由发送端提供。\n" +
+                "每级 +5%，每条链路每秒最多扣 " + C.MaxItemsPerSec + " 个；缺料即停发，" +
+                "接收端不放任何物品。\n" +
+                "【分配】一台发送端挂多台接收端时按各自缺口分配，池满的不占份额。\n" +
+                "【池子】1 级 100 GJ → 满级 1 PJ，满池约 20 秒充放完，功率硬顶 50 TW。\n" +
+                "【接口】底座前后 8 个传送带接口，耗材直接送入，每格 " +
+                C.SlotStackMax.ToString("N0") + " 个。");
             ProtoRegistry.RegisterString(C.LRecipeName, "Interstellar Energy Hub Tower", "星际能量枢纽塔");
             ProtoRegistry.RegisterString(C.LRecipeDesc,
                 "Assemble an Interstellar Energy Hub from power exchangers, ray receivers, " +
@@ -580,14 +815,37 @@ namespace EnergyHub
                 "\n" +
                 "解锁「星际能量枢纽塔」的建造与手工组装：\n" +
                 "· 池子是一台超大容量蓄电器，发送 / 接收时自动为电网充放电（1 级 100 GJ，满级 1 PJ，功率随等级提升、硬顶 50 TW）；\n" +
-                "· 可在恒星系内 / 跨恒星系点对点输送能量，卡槽放三级增产剂可再提速 ×2；\n" +
+                "· 可在恒星系内 / 跨恒星系点对点输送能量，速率由能量池等级决定；\n" +
                 "· 接收端接入本地电网，把远方的电直接喂进工厂。\n" +
                 "\n" +
                 "研究消耗：信息矩阵。\n" +
-                "建造材料：能量枢纽 ×5、射线接收站 ×5、蓄电器 ×100、处理器组件 ×5。");
+                "建造材料：能量枢纽 ×5、射线接收站 ×5、蓄电器 ×100、处理器组件 ×5。\n" +
+                "\n" +
+                "能量池扩容在「升级」页的「能量池扩容」节点上研究（可重复 " +
+                C.PoolTechSteps + " 次，只消耗引力矩阵）。");
             ProtoRegistry.RegisterString(C.LTechConclusion,
                 "Unlocks the Interstellar Energy Hub.",
                 "解锁「星际能量枢纽塔」的建造与手工组装。");
+
+            // 能量池扩容（升级页，可重复研究）
+            ProtoRegistry.RegisterString(C.LPoolTechName, "Pool Expansion", "能量池扩容");
+            ProtoRegistry.RegisterString(C.LPoolTechDesc,
+                "Reinforce the shell of the energy pool with graviton lattices: every step raises " +
+                "the capacity and the charge / discharge power of every Interstellar Energy Hub in " +
+                "this save. Repeatable " + C.PoolTechSteps + " times (up to level " +
+                C.MaxPoolLevel + "); each step costs " + C.PoolTechCostOf(1) + " → " +
+                C.PoolTechCostOf(C.MaxPoolLevel - 1) + " Graviton Matrices.",
+                "用引力晶格加固能量池的外壳：每研究一次，本存档里**所有**星际能量枢纽塔的" +
+                "容量与充放功率一起提升。\n" +
+                "\n" +
+                "· 共可研究 " + C.PoolTechSteps + " 次，能量池最高 " + C.MaxPoolLevel +
+                " 级（100 GJ → 1 PJ，功率硬顶 50 TW）；\n" +
+                "· 每次消耗 " + C.PoolTechCostOf(1) + " → " + C.PoolTechCostOf(C.MaxPoolLevel - 1) +
+                " 个引力矩阵，合计 " + C.TotalPoolTechCost() + " 个；\n" +
+                "· 等级是存档级研究进度：拆掉重建的塔自动就是当前等级，不用重新投入。");
+            ProtoRegistry.RegisterString(C.LPoolTechConclusion,
+                "All hubs gain one more pool level.",
+                "本存档所有能量枢纽塔的能量池 +1 级。");
         }
     }
 }

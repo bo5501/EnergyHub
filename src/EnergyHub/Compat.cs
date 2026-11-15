@@ -59,10 +59,8 @@ namespace EnergyHub
 
                 CheckItem("建筑物品", C.ItemId);
                 CheckItem("配方原料-蓄电器", 2206);
-                CheckItem("升级材料-蓄电器", C.UpgradeItem);
-                CheckItem("升级材料-引力矩阵", Items.GravitonMatrix);
+                CheckItem("研究材料-引力矩阵", Items.GravitonMatrix);
                 CheckItem("传能耗材-信息矩阵", Items.InformationMatrix);
-                CheckItem("提速耗材-增产剂Mk.III", C.BoostItem);
 
                 // 1.16.0：科技节点改成「Awake 交给 LDBTool → 建表后定位置」两步，
                 // 自检通常跑在两步之间，此时还没就位是正常的，别吓人。

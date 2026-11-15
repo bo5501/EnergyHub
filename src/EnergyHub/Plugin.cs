@@ -87,6 +87,10 @@ namespace EnergyHub
                 // 看不到节点的真因就是这个，日志里「已注册 (41,5)」那行出现在 "Pre Loading..." 之前。
                 Tech.PreAdd();
 
+                // 1.21.0：能量池等级改成科技树「升级」页的可重复研究节点（只吃引力矩阵）。
+                // 同样必须在 LDB 建表之前交给 LDBTool，位置/前置等建表后再定。
+                PoolTech.PreAdd();
+
                 // LDBTool 会在 Post Loading 阶段开头回调这个 Action（此时 Pre 批次的 proto 已加入 LDB），
                 // 正好是补 Preload() + 给科技节点定位置的时机
                 LDBTool.PostAddDataAction += Protos.PreloadAll;
@@ -127,10 +131,18 @@ namespace EnergyHub
             try { Tech.EnsureState(); }
             catch (Exception e) { Log.LogWarning("补建科技状态失败: " + e.Message); }
 
+            // 1.21.0：能量池研究节点（等级来源）。这里每帧维护：布局兜底 + 补科技状态 + 刷等级缓存。
+            try { PoolTech.Tick(); }
+            catch (Exception e) { Log.LogWarning("能量池科技维护失败: " + e.Message); }
+
             // 兜底：等存档数据就绪后再试一次（正常情况下 LDBTool 的 PostAdd 回调里已经跑完了）。
             // 加 GameMain.data 判断是为了避免在加载动画阶段提前触发 LDB 的 Resources.Load。
             if (!Protos.IsPreloaded && GameMain.data != null)
                 Protos.PreloadAll();
+
+            // 1.21.0：建造栏落位的延迟补偿（StaticLoad 已经跑掉时靠它补写 protos 表）
+            try { Protos.TickBuildSlot(); }
+            catch (Exception e) { Log.LogWarning("建造栏延时落位失败: " + e.Message); }
             try
             {
                 HubManager.Tick(Time.deltaTime);

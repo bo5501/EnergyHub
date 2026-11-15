@@ -18,7 +18,7 @@ namespace EnergyHub
     {
         public const string Guid = "com.energyhub.dsp";
         public const string Name = "星际能量枢纽塔";
-        public const string Version = "1.19.3";
+        public const string Version = "1.20.0";
 
         // proto id
         public const int ModelId = 666;    // 原版模型最大 id = 665
@@ -54,8 +54,15 @@ namespace EnergyHub
         public const int TechRowStep = 4;
 
         // 建造栏：BuildIndex = 分类*100 + 槽位（UIBuildMenu：分类 ≤15、槽位 ≤12）
-        // 分类 6 = 物流，原版「能量枢纽」占 606，我们放到 607
-        public const int BuildIndex = 607;
+        // 1.20.0：槽位就是 F 键号（F1~F10 对应 1~10），这里要 F10；
+        // 页码不写死 —— 「电力」页在 BuildIndex 里是第几页会随版本 / mod 组合变，
+        // 运行时拿原版蓄电器当锚点算出来（见 Protos.ResolveBuildIndex）。
+        public const int BuildIndex = 607;          // 兜底值（锚点找不到时用）
+        public const int BuildIndexSlot = 10;       // F10
+        public const int BuildIndexAnchor = 2206;   // 原版「蓄电器」，一定挂在电力页
+
+        /// <summary>运行时实际使用的 BuildIndex（默认等于兜底值）。</summary>
+        public static int ResolvedBuildIndex = BuildIndex;
 
         // 物品面板格位（ItemProto.GridIndex，原版 2xxx 段）。
         // 注意：建造栏实际读的是 BuildIndex，GridIndex 只影响部分面板排序，这里取一个空位。
@@ -69,6 +76,9 @@ namespace EnergyHub
         public const string LTechName = "EnergyHub.Tech.Name";
         public const string LTechDesc = "EnergyHub.Tech.Desc";
         public const string LTechConclusion = "EnergyHub.Tech.Conclusion";
+        public const string LPoolTechName = "EnergyHub.PoolTech.Name";
+        public const string LPoolTechDesc = "EnergyHub.PoolTech.Desc";
+        public const string LPoolTechConclusion = "EnergyHub.PoolTech.Conclusion";
 
         // 建筑尺寸（米）
         /// <summary>总高：1.6.0 起塔顶是三颗公转能量球（球心 29.80 m、半径 0.90 m → 球顶 30.70 m），
@@ -91,81 +101,113 @@ namespace EnergyHub
         /// <summary>能量池等级上限（1.10.0：50 → 20 级，压缩曲线、每级收益更大）。</summary>
         public const int MaxPoolLevel = 20;
 
-        /// <summary>升 1 级（1 → 2）的蓄电器基数；其余等级见 <see cref="UpgradeCostOf"/>。</summary>
-        public const int UpgradeCost = 1000;
+        // ---------------- 能量池等级（1.21.0：改由科技树研究） ----------------
+        //
+        // 1.20.x 及以前：等级是**每台建筑自己的**状态，在面板上投料升级。
+        // 代价是「拆了重建就变回 1 级」，而且这个状态要跟着存档、跟着联机包到处传，
+        // 修了两版仍然会在「拆和建落在同一个扫描周期」这类边角上翻车。
+        //
+        // 1.21.0 换成另一条路：等级变成**全局研究进度**，挂在科技树「升级」页的一个
+        // 可重复研究节点上（和原版「矿物利用」那种一样），只消耗引力矩阵。
+        //   · 拆了重建？等级是存档级研究进度，重建出来天生就是当前等级 —— 问题消失；
+        //   · 存档 / 联机也不用再同步每台塔的等级和进度池，一份 techStates 就够；
+        //   · 面板上那条升级栏改成只读的状态显示。
+        //
+        // 【1.21.1 关键修正】研究进度里的 curLevel 直接就是**能量池等级**：
+        //   初始 curLevel = 1（= 能量池 1 级），研究一次 +1，第 19 次到 20 级。
+        // 这样科技树上写的「等级 N」和枢纽面板上的「N 级」永远是同一个数（1.21.0 里
+        // 一个是研究次数、一个是池子等级，正好差 1，玩家一眼就看出不对）。
+        //
+        // 每级引力矩阵需求（从 level 级升到 level+1 级）：
+        //   cost(level) = 900·level + 100·level²
+        //   1 级 1000 个、2 级 2200、3 级 3600、5 级 7000、10 级 19000、19 级 53200，
+        //   全程合计 418000 个（1.21.1 的 20+5l+l² 合计只有 3344，玩家反馈"太便宜"）。
+        //
+        // TechProto.GetHashNeeded(level) 只支持 a + b·level + c·level² 这种形式，
+        // 所以直接令 GetHashNeeded(level) = cost(level) 即：
+        //   HashNeeded = 0、LevelCoef1 = 900×3600、LevelCoef2 = 100×3600。
+        // （每个引力矩阵 3600 hash，见 TechProto.kPointPerItem；LabComponent 里 1 件材料 = 3600 hash）
+
+        /// <summary>科技节点固定 id。必须 ≥ 2000 —— <c>TechProto.page = ID &gt;= 2000 ? 1 : 0</c>，
+        /// ≥ 2000 才会被摆到「升级」页；同时必须 &lt; 12000（TechProto.kMaxProtoId）。
+        /// 2900~2999 段在原版、创世之书里都是空的，2999 取最靠后、最不容易被后来者撞上。</summary>
+        public const int PoolTechFixedId = 2999;
+
+        /// <summary>运行时实际用的节点 id（2999 被别的 MOD 占了会在这里换成空闲 id）。</summary>
+        public static int PoolTechId = PoolTechFixedId;
+
+        /// <summary>总共要研究几次：19 次（1 级起步，每研究一次 +1 级，第 19 次到 20 级）。</summary>
+        public const int PoolTechSteps = MaxPoolLevel - 1;
 
         /// <summary>
-        /// 升级耗材之一：蓄电器（原版 kAccumulator = 2206）。
-        /// 注意 2207 是「满电蓄电器」，升级只认空的 2206。
+        /// 写进 <c>TechProto.MaxLevel</c> / <c>TechState.maxLevel</c> 的值（19）。
+        ///
+        /// DSP 可重复科技的怪癖（GameHistoryData.AddTechHash）：
+        /// 只有当「本次完成时 curLevel 已经等于 maxLevel」才会把 <c>unlocked</c> 置真，
+        /// 否则只把 curLevel +1。也就是说 maxLevel = N 的节点要点 **N+1 次**才算研究完，
+        /// 最后那次不再涨等级。
+        /// 我们让 curLevel 从 1 起步、直接代表能量池等级，于是：
+        ///   研究 1 次 → curLevel 2（= 2 级）… 研究 18 次 → curLevel 19（= 19 级）
+        ///   第 19 次 → curLevel 已经等于 maxLevel，unlocked = true，等级 = 19 + 1 = 20。
+        /// 所以 MaxLevel 填 19，等级 = <c>curLevel + (unlocked ? 1 : 0)</c>，
+        /// 中前期（1~19 级）科技树显示的等级与面板完全一致。
         /// </summary>
-        public const int UpgradeItem = 2206;
+        public const int PoolTechProtoMaxLevel = PoolTechSteps;      // 19
+
+        /// <summary>研究材料每个值多少 hash（ItemPoints = 1 → 一个引力矩阵 3600 hash）。</summary>
+        public const int PoolTechItemPoints = 1;
 
         /// <summary>
-        /// 升一级还要消耗多少个「引力矩阵」（1.12.0 起第二种材料，两种必须同时凑齐）。
-        /// 这是 1 → 2 级的基数，其余等级见 <see cref="UpgradeCost2Of"/>。
+        /// 从 <paramref name="level"/> 级研究到下一级需要多少个引力矩阵（level 1..19）。
+        /// cost(level) = 900·level + 100·level²
+        /// （1.21.3 起把研究成本拉高约 30 倍：1 级 1000 个、5 级 7000、19 级 53200）。
         /// </summary>
-        public const int UpgradeCost2 = 2000;
+        public static int PoolTechCostOf(int level)
+        {
+            if (level >= MaxPoolLevel) return 0;
+            if (level < 1) level = 1;
+            return 900 * level + 100 * level * level;
+        }
+
+        /// <summary><paramref name="level"/> 级这一档研究需要的 hash（= 引力矩阵数 × 3600）。</summary>
+        public static long PoolTechHashOf(int level)
+        {
+            return (long)PoolTechCostOf(level) * 3600L;
+        }
 
         /// <summary>
-        /// 升级耗材之二：引力矩阵（原版 6005，默认值；运行时由 <see cref="Items.GravitonMatrix"/>
+        /// GetHashNeeded(level) 的常数项 / 一次项 / 二次项（单位 hash）。
+        /// 与 <see cref="PoolTechCostOf"/> 完全一致：cost(level) = 900·level + 100·level² 个引力矩阵，
+        /// 一个矩阵 3600 hash，所以常数项 0、一次项 900×3600、二次项 100×3600。
+        /// （HashNeeded 写 0 是安全的：GetHashNeeded 只会被 level ≥ 1 调用。）
+        /// </summary>
+        public const int PoolTechHashNeeded = 0;
+        public const int PoolTechCoef1 = 900 * 3600;
+        public const int PoolTechCoef2 = 100 * 3600;
+
+        /// <summary>
+        /// 1.21.0 的旧公式（0 基研究次数：500 + 150·l + 10·l²）。只用来在读档时
+        /// 认出「这条 TechState 是老版本写的」，从而把进度平移 +1 级、并换成新价格。
+        /// </summary>
+        public static long LegacyPoolTechHashOf(int curLevel)
+        {
+            int l = curLevel < 0 ? 0 : curLevel;
+            return (500L + 150L * l + 10L * l * l) * 3600L;
+        }
+
+        /// <summary>1 级研究到满级累计需要多少引力矩阵（面板 / 文档展示用）。</summary>
+        public static int TotalPoolTechCost()
+        {
+            int sum = 0;
+            for (int lv = 1; lv < MaxPoolLevel; lv++) sum += PoolTechCostOf(lv);
+            return sum;
+        }
+
+        /// <summary>
+        /// 研究材料：引力矩阵（原版 6005，默认值；运行时由 <see cref="Items.GravitonMatrix"/>
         /// 按本地化名字校正，避免版本差异导致 id 变动）。
         /// </summary>
-        public const int UpgradeItem2 = 6005;
-
-        // ---------------- 阶梯式升级材料（1.13.0） ----------------
-        //
-        // 20 级分 5 档，每 4 级抬一档（1~4 / 5~8 / 9~12 / 13~16 / 17~19），
-        // 档内材料固定、跨档抬升，越往后越贵，避免「后期升级比前期还便宜」。
-        //
-        // 数值对齐：容量曲线每级 ×1.62（4 级约 ×6.9），材料每档只抬 1.35~1.55 倍，
-        // 相对收益仍然明显递减，但绝对量已经到了需要分次投料的程度
-        // （蓄电器堆叠较小，3500 个无法一次塞进 84 格卡槽 + 背包）。
-        // 所以升级材料改成「投入式进度池」：卡槽/传送带送来的材料会被自动吸收累积，
-        // 攒够当前等级的需求再点升级，玩家不必一次凑齐。
-        private static readonly int[] UpTierAcc = { 1000, 1400, 1900, 2600, 3500 };
-        private static readonly int[] UpTierMat = { 2000, 3200, 5000, 7800, 12000 };
-
-        /// <summary>等级 L 属于第几档（0 起）：1~4 级 → 0，5~8 级 → 1，以此类推。</summary>
-        public static int UpgradeTierOf(int level)
-        {
-            if (level < 1) level = 1;
-            int t = (level - 1) / 4;
-            if (t < 0) t = 0;
-            if (t >= UpTierAcc.Length) t = UpTierAcc.Length - 1;
-            return t;
-        }
-
-        /// <summary>从 level 升到 level+1 需要的蓄电器（满级返回 0）。</summary>
-        public static int UpgradeCostOf(int level)
-        {
-            if (level >= MaxPoolLevel) return 0;
-            if (level < 1) level = 1;
-            return UpTierAcc[UpgradeTierOf(level)];
-        }
-
-        /// <summary>从 level 升到 level+1 需要的引力矩阵（满级返回 0）。</summary>
-        public static int UpgradeCost2Of(int level)
-        {
-            if (level >= MaxPoolLevel) return 0;
-            if (level < 1) level = 1;
-            return UpTierMat[UpgradeTierOf(level)];
-        }
-
-        /// <summary>1 级升到 20 级累计需要的蓄电器（面板 / 文档展示用）。</summary>
-        public static int TotalUpgradeCost()
-        {
-            int sum = 0;
-            for (int l = 1; l < MaxPoolLevel; l++) sum += UpgradeCostOf(l);
-            return sum;
-        }
-
-        /// <summary>1 级升到 20 级累计需要的引力矩阵。</summary>
-        public static int TotalUpgradeCost2()
-        {
-            int sum = 0;
-            for (int l = 1; l < MaxPoolLevel; l++) sum += UpgradeCost2Of(l);
-            return sum;
-        }
+        public const int GravitonMatrixDefault = 6005;
 
         /// <summary>
         /// 建筑功率硬顶：50 TW（5×10^13 W）。实际功率 = min(50 TW, 容量÷充满秒数)，
@@ -181,19 +223,12 @@ namespace EnergyHub
         /// <summary>满池跨星球传输时间（秒）：比电网充放慢 5 倍，鼓励多台并联。</summary>
         public const double PoolFullTransferSec = 100.0;
 
-        // ---------------- 提速耗材（1.10.0） ----------------
-
-        /// <summary>
-        /// 提速耗材：三级增产剂 Mk.III（原版物品 1141/1142/1143 三档，1143 是最高档）。
-        /// 卡槽里有它时，星际传输速率放大 <see cref="BoostRate"/> 倍，并按秒消耗。
-        /// </summary>
-        public const int BoostItem = 1143;
-
-        /// <summary>有提速耗材时的传输倍率。</summary>
-        public const float BoostRate = 2.0f;
-
-        /// <summary>提速期间每秒消耗的提速剂个数（只在真的有能量外送时扣）。</summary>
-        public const float BoostPerSec = 1.0f;
+        // ---------------- 提速耗材（1.10.0 加入，1.20.0 取消） ----------------
+        //
+        // 原来卡槽里放「三级增产剂 Mk.III」可以把传输速率翻倍（每秒吃 1 个）。
+        // 玩家反馈这一格对玩法没有帮助、还占地方，1.20.0 起整个功能去掉：
+        // 不再有提速格、不再消耗增产剂、传输速率只由能量池等级决定。
+        // 协议 / 存档里的 dBoost / slotBoost 字段保留（恒为 0），老档仍然能读。
 
         // ---------------- 按需自动分配（1.11.0） ----------------
 
@@ -272,6 +307,39 @@ namespace EnergyHub
         /// 200 MJ 与原来的 1 翘曲器/200 MJ 一致，按 24 MW 的传输速率约 8 秒 1 个。
         /// </summary>
         public const long EnergyPerItem = 200_000_000L;
+
+        /// <summary>
+        /// 某一级的「1 个耗材换多少焦耳」（1.21.4 重做）。
+        ///
+        /// 1.20.1 起用的是「满速传输 1 秒的能量」= <c>PoolOf(level) / 100</c>，
+        /// 20 级算下来是 10 TJ/个 —— 只有**满速**跑才是每秒 1 个。
+        /// 但实际传能功率由接收端电网缺口决定，通常只有满速的千分之一到百分之一，
+        /// 于是 7 级的塔传 50 MW 时要 **6 分钟才扣 1 个信息矩阵**，
+        /// 面板上那个数字几分钟都不动，看着就是「传能不扣料」。
+        ///
+        /// 现在改成温和的等级曲线：1 级 1 GJ/个，每级 +5%，20 级约 2.5 GJ/个。
+        /// 50 MW → 20 秒 1 个，100 MW → 10 秒 1 个，肉眼能看见扣料；
+        /// 满速高负载时由 <see cref="MaxItemsPerSec"/> 限流，不会几秒烧空卡槽。
+        /// </summary>
+        public static long EnergyPerItemAt(int level)
+        {
+            if (level < 1) level = 1;
+            if (level > MaxPoolLevel) level = MaxPoolLevel;
+            double per = 1_000_000_000.0 * Math.Pow(1.05, level - 1);
+            return (long)per;
+        }
+
+        /// <summary>
+        /// 每条链路每秒最多扣多少个耗材（1.21.4）。
+        ///
+        /// 能量池满速时（20 级 10 TW）按 <see cref="EnergyPerItemAt"/> 算是每秒上万个，
+        /// 卡槽 1 万格眨眼就空 —— 那又会回到「料烧光 → 硬停」。这里硬性限流：
+        /// 满速也好、超高负载也好，一条链路每秒最多扣这么多个，
+        /// 超出部分算「等级带来的省料」，不再额外扣。
+        ///
+        /// 正常玩法（单塔几十 GW 以内）根本够不到这个上限，不影响按能量计费。
+        /// </summary>
+        public const int MaxItemsPerSec = 10;
 
         /// <summary>旧名保留：等价于 <see cref="EnergyPerItem"/>。</summary>
         public const long WarperPerEnergy = EnergyPerItem;
@@ -356,6 +424,16 @@ namespace EnergyHub
         public const int SlotCols = 6;
         public const int SlotRows = 14;
         public const int SlotCount = SlotCols * SlotRows;
+
+        /// <summary>
+        /// 每种消耗品在卡槽里的存量上限（1.20.1）。
+        ///
+        /// 以前上限是「格数 × 该物品的原版堆叠」：84 格被 5 种料抢，蓄电器一格只叠 100，
+        /// 玩家用传送带源源不断送料时会很快顶满，面板上那几格看起来就「不涨了 / 没数据」。
+        /// 现在直接把每格的 stackSize 抬到 1 万（原版 AddItem 认 grid.stackSize），
+        /// 一种料一格就能存 1 万个，传送带送多少面板显示多少。
+        /// </summary>
+        public const int SlotStackMax = 10000;
 
         /// <summary>
         /// 电力节点连接距离（米）。节点之间取两者 connectDistance 的较大值判定能否连线，

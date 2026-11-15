@@ -51,6 +51,9 @@ else
   cp "$ROOT/README.md" "$PKG/README.md"
 fi
 
+# 更新日志：Thunderstore 会在页面上渲染包内的 CHANGELOG.md
+cp "$ROOT/CHANGELOG.md" "$PKG/CHANGELOG.md"
+
 # 3.5) manifest：版本号与短描述统一由 tools/stamp_manifest.py 生成，避免每版手改漏字段
 "$PY" "$ROOT/tools/stamp_manifest.py" "$PKG/manifest.json" "$VERSION"
 
@@ -60,7 +63,7 @@ import json, os, sys
 from PIL import Image
 
 pkg, ver, pkgname = sys.argv[1], sys.argv[2], sys.argv[3]
-need = ["manifest.json", "icon.png", "README.md",
+need = ["manifest.json", "icon.png", "README.md", "CHANGELOG.md",
         "BepInEx/plugins/EnergyHub/DSPEnergyHub.dll"]
 for f in need:
     p = os.path.join(pkg, f)

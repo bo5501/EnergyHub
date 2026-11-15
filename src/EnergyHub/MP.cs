@@ -134,11 +134,11 @@ namespace EnergyHub
         }
 
         /// <summary>处理器收到包之后转给 HubManager（统一在一处做应用逻辑）。</summary>
-        internal static void Dispatch(byte[] data, bool fromHost, bool snapshot)
+        internal static void Dispatch(byte[] data, bool fromHost, bool snapshot, bool control = true)
         {
             if (data == null || data.Length == 0)
                 return;
-            try { HubManager.OnNetData(data, fromHost, snapshot); }
+            try { HubManager.OnNetData(data, fromHost, snapshot, control); }
             catch (Exception e) { Plugin.Log.LogWarning("[联机] 应用枢纽状态失败: " + e.Message); }
         }
     }

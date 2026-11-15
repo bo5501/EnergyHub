@@ -22,11 +22,11 @@ namespace EnergyHub
         public static int InformationMatrix = 6004;
 
         /// <summary>
-        /// 引力矩阵（能量池升级材料之一，默认 6005）。
+        /// 引力矩阵（能量池「科技研究」的耗材，默认 6005）。
         /// 和 <see cref="InformationMatrix"/> 一样按本地化名字校正：
-        /// 版本差异 / 汉化包可能让 id 偏移，光靠硬编码会点「升级」时报「缺少引力矩阵」。
+        /// 版本差异 / 汉化包可能让 id 偏移，光靠硬编码会让科技节点显示错误的材料。
         /// </summary>
-        public static int GravitonMatrix = C.UpgradeItem2;
+        public static int GravitonMatrix = C.GravitonMatrixDefault;
 
         /// <summary>空间翘曲器（跨星系传能的必需品）。</summary>
         public static int Warper = 1210;

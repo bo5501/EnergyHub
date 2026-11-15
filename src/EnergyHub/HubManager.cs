@@ -13,9 +13,14 @@ namespace EnergyHub
         /// <summary>
         /// 【已废弃】储能（1.7.0 曾作为独立模式，1.7.1 并入发送/接收——
         /// 这两种模式下池子本来就自动充放，不需要单独的按钮）。
-        /// 枚举值保留只为老存档兼容：Import 时 3 会转成 Idle。
+        /// 枚举值保留只为老存档兼容：Import 时 3 会转成 <see cref="Battery"/>。
         /// </summary>
         Store = 3,
+        /// <summary>
+        /// 仅蓄电（1.20.0）：只当超大蓄电器用 —— 电网有余电就充、缺电就放，
+        /// 不参与星际对接、不消耗任何耗材。等于「关机 + 蓄电器功能」，但不需要再点发送/接收。
+        /// </summary>
+        Battery = 4,
     }
 
     /// <summary>单台枢纽的可持久化配置。</summary>
@@ -55,6 +60,12 @@ namespace EnergyHub
         public long cachedPool;
 
         /// <summary>
+        /// 这台机器所在星球当前的电力缺口（W，正数 = 缺电；0 = 不缺）。
+        /// 1.20.0：联机时由客户端上报，主机按「谁更缺电」优先分配（见 <see cref="DeliverToReceivers"/>）。
+        /// </summary>
+        public long planetNeed;
+
+        /// <summary>
         /// 本地操作时间戳（<c>Time.time</c>，联机客户端用）。
         /// 客户端点了「切换模式 / 连接 / 升级」之后的一小段时间里，
         /// 主机广播回来的旧快照不应该把界面上的新状态弹回去，靠它做保护窗口。
@@ -73,6 +84,19 @@ namespace EnergyHub
         /// </summary>
         public double costAccSame;
         public double costAccCross;
+
+        /// <summary>
+        /// 本秒还剩多少扣料额度（1.21.4，见 <see cref="C.MaxItemsPerSec"/>）。
+        /// 每秒重置一次，用来给满速高负载兜底，避免一帧把卡槽烧空。
+        /// </summary>
+        public int chargeQuota;
+        public float chargeQuotaStamp = -999f;
+
+        /// <summary>诊断：本秒实际扣掉的料（面板 / 日志用）。</summary>
+        public int chargedThisSec;
+        /// <summary>诊断：上一秒扣掉的数量，供 <c>[发送]</c> 日志展示。</summary>
+        public int chargedLastSec;
+
         /// <summary>诊断日志节流计时（每 2 秒打一条收发状态）。</summary>
         public float diagTimer;
 
@@ -143,6 +167,21 @@ namespace EnergyHub
         public bool slotSynced;
 
         /// <summary>
+        /// 待对账（1.20.0 修）。
+        ///
+        /// 主机收到客户端上报时，如果那颗星球的工厂当时不在主机端（玩家在主机没加载过的星球
+        /// 放了料），主机只能把客户端报的**绝对值**记下来，没法去改本地 StorageComponent。
+        /// 以前这里什么都不做：等主机后来加载了那颗星球，新工厂的卡槽是空的，
+        /// <see cref="CaptureSlots"/> 一读就把记录里的绝对值覆盖成 0，再广播给客户端 ——
+        /// 客户端那 1 万个料凭空消失。
+        ///
+        /// 现在打上这个标记，等主机端真的有了工厂（<see cref="Broadcast"/> 里每 0.5 秒检查一次），
+        /// 先把记录里的绝对值**写进**本地卡槽（<see cref="MirrorSlots"/>），再开始 CaptureSlots。
+        /// 纯运行时状态，不存档、不上网。
+        /// </summary>
+        public bool needReconcile;
+
+        /// <summary>
         /// 客户端这一轮攒下的「卡槽变动量」（玩家点放入 / 取出），随状态包发给主机。
         /// 为什么发增量而不是绝对值：客户端的卡槽是主机广播下来的镜像，可能比主机晚 0.5 秒；
         /// 拿绝对值覆盖会把主机这期间消耗掉的料当成新料补回去（等于白送燃料）。
@@ -206,8 +245,12 @@ namespace EnergyHub
         /// </summary>
         public float gridHold;
 
-        // ---- 能量池等级（1.7.0，1.10.0 改为 1~20 级）----
-        /// <summary>能量池等级 1~20：容量见 <see cref="C.PoolOf"/>（100 GJ → 1 PJ 指数曲线）。</summary>
+        // ---- 能量池等级（1.7.0，1.10.0 改为 1~20 级；1.21.0 改由科技研究决定）----
+        /// <summary>
+        /// 能量池等级 1~20：容量见 <see cref="C.PoolOf"/>（100 GJ → 1 PJ 指数曲线）。
+        /// 1.21.0 起这只是「全局研究等级」的本地副本，由 <see cref="SyncResearchLevel"/> 每 0.5 秒同步，
+        /// 不再是能单独升级的建筑状态 —— 所以拆了重建不会丢等级。
+        /// </summary>
         public int level = 1;
 
         /// <summary>
@@ -220,11 +263,7 @@ namespace EnergyHub
         /// <summary>面板显示用：上一次充/放电功率（J/tick，带符号）。</summary>
         public long lastFlow;
 
-        // ---- 提速（1.10.0）----
-        /// <summary>卡槽里有三级增产剂、本帧传输确实在提速（面板显示用）。</summary>
-        public bool boostActive;
-        /// <summary>提速耗材的扣料累计（秒），不足 1 个的部分留到下次。</summary>
-        public float boostAcc;
+        // ---- 提速（1.10.0 加入，1.20.0 取消：不再有增产剂提速，字段删干净）----
 
         // ---- 按需自动分配（1.11.0）----
         /// <summary>
@@ -247,20 +286,8 @@ namespace EnergyHub
         public float grantedPct;
 
 
-        /// <summary>
-        /// 已经投进升级池的材料（1.13.0）。
-        ///
-        /// 为什么要有它：阶梯材料后期一档要 2600~3500 个蓄电器，而蓄电器堆叠小，
-        /// 卡槽 84 格 + 背包也放不下，玩家不可能「一次凑齐」。所以改成投入式：
-        /// 卡槽里（含传送带送进来的）升级材料会自动被吸进这里累积，攒够当前等级的需求再点升级。
-        /// 满级时若还有余料，会自动退回卡槽，不会凭空消失。
-        /// </summary>
-        public long upAcc;
-        /// <summary>已投入升级池的引力矩阵（1.13.0）。</summary>
-        public long upMat;
-
-        /// <summary>卡槽吸收节流计时（运行时，不入存档）：每 0.25 秒扫一次卡槽就够。</summary>
-        public float absorbTimer;
+        /// <summary>传送带「有料进不来」的诊断日志节流（运行时，不入存档）。</summary>
+        public float beltWarnTimer;
 
         /// <summary>这台机器的能量池容量（J）。</summary>
         public long Capacity
@@ -268,17 +295,6 @@ namespace EnergyHub
             get { return C.PoolOf(level); }
         }
 
-        /// <summary>升级到下一级要多少蓄电器（满级返回 0）。</summary>
-        public int UpgradeNeed
-        {
-            get { return C.UpgradeCostOf(level); }
-        }
-
-        /// <summary>升级到下一级要多少引力矩阵（满级返回 0）。</summary>
-        public int UpgradeNeed2
-        {
-            get { return C.UpgradeCost2Of(level); }
-        }
     }
 
     /// <summary>对接面板里的一行：一个「终端」。</summary>
@@ -334,6 +350,76 @@ namespace EnergyHub
         /// 同星球两台接收端还会重复吸同一桶（凭空多出一份能量）。
         /// </summary>
         private static readonly Dictionary<long, long> _pending = new Dictionary<long, long>();
+
+        /// <summary>取料时复用的传送带缓冲（避免每帧 new List）。</summary>
+        private static readonly List<int> _beltBuf = new List<int>(16);
+
+        // ---------------- 能量池等级 = 全局研究进度（1.21.0） ----------------
+        //
+        // 1.20.x 的等级是「每台建筑自己的」，拆了重建就变回 1 级。修了两版（先清拆再建、
+        // 4 米内找残留、0.1 秒拆除检测）仍然会在「拆和建落在同一个扫描周期」这类时序上翻车。
+        //
+        // 1.21.0 从根上换掉：等级不再存在每台塔上，而是**存档级的研究进度**
+        // （科技树升级页的可重复研究节点，见 PoolTech）。于是：
+        //   · 拆了重建 → 等级是研究进度，重建出来天生就是当前等级，没有任何"恢复"逻辑要跑；
+        //   · 存档 / 联机也不用再搬每台塔的等级与升级进度池，一份 techStates 就够。
+        //
+        // HubInfo.level 仍然保留，但它现在只是「研究等级的本地副本」：
+        // 每 0.5 秒从 <see cref="PoolTech.Level"/> 同步一次（只升不降，联机里主机广播来的
+        // 更大值也照收），exchanger 的容量 / 功率照旧由 ApplyLevel 每帧对齐。
+        private static float _levelSyncTimer;
+
+        /// <summary>
+        /// 旧存档迁移用：读档时记下「存档里最高的那台塔是几级」。
+        /// 1.21.0 第一次进这个存档时，研究进度从这一级起步，玩家不会被打回 1 级。
+        /// -1 = 还没读过存档。
+        /// </summary>
+        private static int _migratedLevel = -1;
+
+        /// <summary>取走迁移种子（只生效一次，之后返回 0）。</summary>
+        public static int TakeMigratedLevel()
+        {
+            int lv = _migratedLevel;
+            _migratedLevel = -1;
+            return lv > 1 ? lv - 1 : 0;
+        }
+
+        /// <summary>
+        /// 清掉已经不在工厂里的枢纽记录，并把这些位置的等级留成残留。
+        /// 单独抽出来是为了能比 0.5 秒的 <see cref="Scan"/> 更勤快地被调用。
+        /// </summary>
+        private static void PruneDead(int planetId, PlanetFactory factory)
+        {
+            Dictionary<int, HubInfo> d;
+            if (!_byPlanet.TryGetValue(planetId, out d) || d == null || d.Count == 0)
+                return;
+            if (factory == null)
+                return;
+            EntityData[] pool = factory.entityPool;
+            if (pool == null || factory.entityCursor <= 1)
+                return;
+
+            List<int> dead = null;
+            foreach (var kv in d)
+            {
+                int id = kv.Key;
+                if (id >= pool.Length || pool[id].id != id || pool[id].protoId != (short)C.ItemId)
+                {
+                    if (dead == null) dead = new List<int>();
+                    dead.Add(id);
+                }
+            }
+            if (dead == null)
+                return;
+            foreach (int id in dead)
+            {
+                d.Remove(id);
+                DropPeersOf(planetId, id);
+                // 拆掉的接收端不能把在途能量留在账本里：以后再建一台拿到同一个 id 的建筑，
+                // 一接通就会凭空多出一大笔能量。
+                _pending.Remove(Key(planetId, id));
+            }
+        }
 
         private static PlanetFactory _lastFactory;
         private static int _lastPlanetId = -1;
@@ -410,6 +496,10 @@ namespace EnergyHub
             // （远程星球刚加载时最容易踩）。等实体表铺好再扫。
             if (pool == null || cursor <= 1)
                 return;
+
+            // 先清掉已经拆掉的塔，再处理新建筑（顺序不影响等级了，但能让 OnHubsChanged 只抖一次）。
+            PruneDead(planetId, factory);
+
             for (int i = 1; i < cursor && i < pool.Length; i++)
             {
                 EntityData ed = pool[i];
@@ -419,7 +509,16 @@ namespace EnergyHub
                 HubInfo info;
                 if (!d.TryGetValue(i, out info))
                 {
-                    d[i] = new HubInfo { entityId = i, planetId = planetId, pos = ed.pos, hasPos = true };
+                    // 1.21.0：新塔直接继承当前研究等级（重建的塔天生就是对的等级，无需"恢复"）
+                    info = new HubInfo
+                    {
+                        entityId = i,
+                        planetId = planetId,
+                        pos = ed.pos,
+                        hasPos = true,
+                        level = Mathf.Clamp(PoolTech.Level, 1, C.MaxPoolLevel),
+                    };
+                    d[i] = info;
                     continue;
                 }
 
@@ -440,7 +539,7 @@ namespace EnergyHub
                 {
                     Plugin.Log.LogInfo("枢纽 #" + i + "（星球 " + planetId +
                                        "）位置变了，原记录来自另一台已拆除的建筑（实体 id 被复用）：" +
-                                       "已重置为待机、并清掉旧的对接关系");
+                                       "已重置为关机、并清掉旧的对接关系");
                     info.mode = (int)HubMode.Idle;
                     // 发送端的「谁连着我」是每帧从接收端反推的，这里清掉对端即可，不用额外通知
                     info.peerPlanetId = -1;
@@ -450,29 +549,6 @@ namespace EnergyHub
                     info.peerUnloaded = false;
                     info.pos = ed.pos;
                     _pending.Remove(Key(planetId, i));
-                }
-            }
-
-            // 清掉已被拆除的
-            List<int> dead = null;
-            foreach (var kv in d)
-            {
-                int id = kv.Key;
-                if (id >= pool.Length || pool[id].id != id || pool[id].protoId != (short)C.ItemId)
-                {
-                    if (dead == null) dead = new List<int>();
-                    dead.Add(id);
-                }
-            }
-            if (dead != null)
-            {
-                foreach (int id in dead)
-                {
-                    d.Remove(id);
-                    DropPeersOf(planetId, id);
-                    // 拆掉的接收端不能把在途能量留在账本里：以后再建一台拿到同一个 id 的建筑，
-                    // 一接通就会凭空多出一大笔能量。
-                    _pending.Remove(Key(planetId, id));
                 }
             }
             if (OnHubsChanged != null) OnHubsChanged();
@@ -515,6 +591,10 @@ namespace EnergyHub
             // 单机、客户端调用都是空操作（见 MP.Broadcast）。
             Broadcast(dt);
 
+            // 1.20.0：客户端每 0.5 秒把本星球枢纽的「需求 / 电网缺口」上报一次。
+            // 以前只有玩家点按钮才上报，主机拿不到客户端的实时缺口，"按需求量分配"形同虚设。
+            ReportClientDemand(dt);
+
             PlanetData localPlanet = GameMain.localPlanet;
             if (localPlanet == null || localPlanet.factory == null)
             {
@@ -523,6 +603,8 @@ namespace EnergyHub
             PlanetFactory factory = localPlanet.factory;
             int id = localPlanet.id;
             _scanTimer += dt;
+            // 1.21.0：等级已经是全局研究进度，拆塔不再需要「抢在 0.1 秒内记住等级」，
+            // 拆除检测跟着 0.5 秒的整表扫描一起做就行。
             if (_scanTimer >= 0.5f)
             {
                 _scanTimer = 0f;
@@ -532,6 +614,15 @@ namespace EnergyHub
             else
             {
                 Scan(factory, id);
+            }
+            // 1.21.0：把「全局研究进度」同步到每一台塔（0.5 秒一次）。
+            // 这就是「拆了重建等级失效」的根治办法 —— 新塔一进表就拿到当前研究等级，
+            // 不需要任何按位置记忆 / 恢复的逻辑。
+            _levelSyncTimer -= dt;
+            if (_levelSyncTimer <= 0f)
+            {
+                _levelSyncTimer = 0.5f;
+                SyncResearchLevel();
             }
             try
             {
@@ -591,6 +682,11 @@ namespace EnergyHub
                         ReplayRemote(value2, ref exc, powerSystem, out cfx, out cwhy);
                         powerSystem.excPool[val4.powerExcId] = exc;
 
+                        // 1.20.0：客户端自己算一份「本机需求 / 本星球缺口」，随上报发给主机。
+                        // 主机看不到客户端星球的实时负载，没有这份数就只能按满功率估算，
+                        // 于是「谁更缺电」永远分不出来。
+                        ComputeDemand(value2, exc, powerSystem);
+
                         value2.fxTarget = cfx;
                         value2.fxReason = cfx > 0.5f ? "" : cwhy;
                         float cstep = (cfx > value2.fxLevel ? C.FxRisePerSec : C.FxFallPerSec) * dt;
@@ -614,25 +710,19 @@ namespace EnergyHub
 
                     long num = (long)((float)C.TransferPerTickOf(value2.level) * Mathf.Clamp(dt * 60f, 0.2f, 3f));
                     EnsureSlotSize(GetStorage(val2, val4.storageId));
+                    DrainExcAccumulators(val2, val4.storageId, ref exc);
                     PullItemsFromBelts(val2, val4.storageId, key2, exc, value2);
-                    value2.absorbTimer -= dt;
-                    if (value2.absorbTimer <= 0f)
-                    {
-                        value2.absorbTimer = 0.25f;
-                        AbsorbUpgradeItems(value2, val2, val4.storageId);
-                    }
+                    // 1.20.1：不再把卡槽里的升级材料偷偷吸进「进度池」。
+                    // 以前传送带送进来的蓄电器 / 引力矩阵会立刻被吸走，卡槽那格永远显示 0，
+                    // 玩家看到的就是「送进去了但没数据」。现在料就留在卡槽里，
+                    // 一格能存 C.SlotStackMax（1 万），升级时直接从卡槽扣。
+                    // 老存档里已经投进进度池的数量照旧算数（见 Upgrade）。
                     long num2 = 0L;
-                    value2.boostActive = false;
                     bool flag = exc.currEnergyPerTick > 0 || exc.currPoolEnergy > 0;
                     bool flag2 = exc.networkId > 0 && NetHasPower(powerSystem, exc.networkId);
                     value2.gridHold = Mathf.Max(0f, value2.gridHold - dt);
                     float num3 = 0f;
                     string text = "未接入电网";
-                    if (value2.mode == 0)
-                    {
-                        value2.storageDir = 0;
-                        value2.storageHold = 0f;
-                    }
                     switch ((HubMode)value2.mode)
                     {
                     case HubMode.Send:
@@ -641,12 +731,14 @@ namespace EnergyHub
                         value2.loggedLink = value2.linked;
                         if (loggedLink != value2.linked)
                         {
-                            Plugin.Log.LogInfo(("枢纽 #" + key2 + (value2.linked ? (" 对接成功：接收端 ×" + value2.receiverCount + "，开始发送") : " 对接断开：没有接收端连接，停止发送（蓄电器照常工作）")));
+                            Plugin.Log.LogInfo(("枢纽 #" + key2 + (value2.linked ? (" 对接成功：接收端 ×" + value2.receiverCount + "，开始发送") : " 对接断开：没有接收端连接，停止发送")));
                         }
                         int num13 = BatteryDir(value2, exc, powerSystem, dt);
-                        exc.state = ((num13 < 0) ? (-1f) : 1f);
+                        // 1.20.0：方向为 0 时 state 置 0（真的不参与电网），
+                        // 以前一律写 1，原版就按「充电」把这台机器算进电网负载里。
+                        exc.state = ((num13 > 0) ? 1f : ((num13 < 0) ? (-1f) : 0f));
                         exc.targetState = exc.state;
-                        ApplyChargeCap(value2, ref exc, (num13 >= 0) ? 1 : 0, powerSystem);
+                        ApplyChargeCap(value2, ref exc, num13, powerSystem);
                         if (flag || num13 != 0)
                         {
                             value2.gridHold = C.FxHoldSec;
@@ -658,7 +750,7 @@ namespace EnergyHub
                         }
                         else
                         {
-                            text = ((!value2.linked) ? "没有接收端连接（蓄电器照常工作）" : "本星球电网没有空闲能量");
+                            text = ((!value2.linked) ? "没有接收端连接" : "本星球电网没有空闲能量");
                         }
                         long currPoolEnergy = exc.currPoolEnergy;
                         value2.itemStarved = false;
@@ -669,22 +761,16 @@ namespace EnergyHub
                             value2.stockTimer = 0.2f;
                             PublishStock(val2, val4.storageId, value2);
                         }
-                        int num14 = CountItem(val2, val4.storageId, C.BoostItem);
-                        bool flag4 = num14 > 0 && HasSendFuel(val2, val4.storageId);
-                        long val9 = (flag4 ? ((long)((float)num * 2f)) : num);
+                        // 1.20.0：增产剂提速取消，速率只由能量池等级决定。
                         if (value2.linked && currPoolEnergy > 0)
                         {
-                            long amount = Math.Min(currPoolEnergy, val9);
+                            long amount = Math.Min(currPoolEnergy, num);
                             long num15 = DeliverToReceivers(val2, val4.storageId, value2, amount, num);
                             if (num15 > 0)
                             {
                                 exc.currPoolEnergy -= num15;
                                 value2.totalSent += num15;
                                 num2 = num15;
-                                if (flag4)
-                                {
-                                    ConsumeBoost(val2, val4.storageId, value2, num14, dt);
-                                }
                             }
                         }
                         if (value2.itemStarved && num2 <= 0)
@@ -692,17 +778,12 @@ namespace EnergyHub
                             if (!value2.loggedStarve)
                             {
                                 value2.loggedStarve = true;
-                                Plugin.Log.LogInfo(("枢纽 #" + key2 + " 停止发送：卡槽里没有" + (value2.starveNeed ?? "传能耗材") + "（同星系每 200 MJ 吃 1 信息矩阵；跨星系吃 1 空间翘曲器 + 1 引力透镜） | 矩阵=" + CountItem(val2, val4.storageId, Items.InformationMatrix) + " 翘曲器=" + CountItem(val2, val4.storageId, ItemProto.kWarperId) + " " + LensDebug(val2, val4.storageId)));
+                                Plugin.Log.LogInfo(("枢纽 #" + key2 + " 停止发送：卡槽里没有" + (value2.starveNeed ?? "传能耗材") + "（同星系每 " + (C.EnergyPerItemAt(value2.level) / 1_000_000_000.0).ToString("0.00") + " GJ 吃 1 信息矩阵；跨星系吃 1 空间翘曲器 + 1 引力透镜） | 矩阵=" + CountItem(val2, val4.storageId, Items.InformationMatrix) + " 翘曲器=" + CountItem(val2, val4.storageId, ItemProto.kWarperId) + " " + LensDebug(val2, val4.storageId)));
                             }
                         }
                         else
                         {
                             value2.loggedStarve = false;
-                        }
-                        value2.boostActive = flag4 && num2 > 0;
-                        if (!flag4)
-                        {
-                            value2.boostAcc = 0f;
                         }
                         value2.diagTimer -= dt;
                         if (!(value2.diagTimer <= 0f))
@@ -729,7 +810,7 @@ namespace EnergyHub
                                 text2 = text2 + "#" + num18 + "@" + planetId + ((val10 == null) ? "(未加载)" : "(已加载)");
                             }
                         }
-                        Plugin.Log.LogInfo(("[发送] #" + key2 + " 星球=" + key + " 池=" + exc.currPoolEnergy + " 单tick上限=" + num + " 实投=" + num2 + " 矩阵=" + CountItem(val2, val4.storageId, Items.InformationMatrix) + " 翘曲器=" + CountItem(val2, val4.storageId, ItemProto.kWarperId) + " 透镜=" + CountLens(val2, val4.storageId) + " 提速剂=" + CountItem(val2, val4.storageId, C.BoostItem) + (value2.boostActive ? ("（提速中 ×" + 2f + "）") : "") + " 缺料=" + (value2.itemStarved ? "是" : "否") + " 蓄电器=" + ((value2.storageDir > 0) ? "充" : ((value2.storageDir < 0) ? "放" : "停")) + " 电网空闲=" + GridIdleOf(powerSystem, exc) + "J/tick（" + GridIdleOf(powerSystem, exc) * 60 + "W） 接收端=" + text2 + " 对端在途=" + num16));
+                        Plugin.Log.LogInfo(("[发送] #" + key2 + " 星球=" + key + " 池=" + exc.currPoolEnergy + " 单tick上限=" + num + " 实投=" + num2 + " 矩阵=" + CountItem(val2, val4.storageId, Items.InformationMatrix) + " 翘曲器=" + CountItem(val2, val4.storageId, ItemProto.kWarperId) + " 透镜=" + CountLens(val2, val4.storageId) + " 缺料=" + (value2.itemStarved ? "是" : "否") + " 扣料/秒=" + value2.chargedLastSec + " 单片=" + (C.EnergyPerItemAt(value2.level) / 1_000_000_000.0).ToString("0.00") + "GJ 额度余=" + value2.chargeQuota + " 蓄电器=" + ((value2.storageDir > 0) ? "充" : ((value2.storageDir < 0) ? "放" : "停")) + " 电网空闲=" + GridIdleOf(powerSystem, exc) + "J/tick（" + GridIdleOf(powerSystem, exc) * 60 + "W） 接收端=" + text2 + " 对端在途=" + num16));
                         break;
                     }
                     case HubMode.Receive:
@@ -737,30 +818,14 @@ namespace EnergyHub
                         value2.senderCount = (value2.linked ? 1 : 0);
                         value2.receiverCount = 0;
                         int num4 = BatteryDir(value2, exc, powerSystem, dt);
-                        exc.state = ((num4 > 0) ? 1f : (-1f));
+                        // 1.20.0：方向为 0 时 state 置 0（既不充也不放）；以前固定写 -1，
+                        // 原版就一直把这台机器当电源挂在电网上。
+                        exc.state = ((num4 > 0) ? 1f : ((num4 < 0) ? (-1f) : 0f));
                         exc.targetState = exc.state;
-                        ApplyChargeCap(value2, ref exc, (num4 > 0) ? 1 : 0, powerSystem);
-                        long num5 = value2.Capacity - exc.currPoolEnergy;
-                        if (num5 < 0)
-                        {
-                            num5 = 0L;
-                        }
-                        long num6 = C.ExchangePerTickOf(value2.level) * 60;
-                        long num7 = (long)Math.Min(num5, (double)num6 * 5.0);
-                        long val5 = 0L;
-                        if (exc.networkId > 0 && exc.networkId < powerSystem.netPool.Length)
-                        {
-                            PowerNetwork val6 = powerSystem.netPool[exc.networkId];
-                            long num8 = val6.energyRequired - val6.energyCapacity;
-                            if (num8 > 0)
-                            {
-                                val5 = num8 * 60;
-                            }
-                        }
-                        long num9 = num5 - num7;
-                        value2.demand = num7 + ((num9 > 0) ? Math.Min(num9, val5) : 0);
-                        value2.demandFresh = true;
-                        value2.demandStamp = Time.time;
+                        ApplyChargeCap(value2, ref exc, num4, powerSystem);
+                        // 需求（池子空余 + 本地电网缺口）统一由 ComputeDemand 算：
+                        // 客户端也用同一个函数算完上报给主机，两端口径一致才能「按缺口排队」。
+                        ComputeDemand(value2, exc, powerSystem);
                         long num10 = GetPending(key, key2);
                         long num11 = num10;
                         if (value2.linked && num10 > 0)
@@ -789,7 +854,7 @@ namespace EnergyHub
                         }
                         else
                         {
-                            text = ((!value2.linked) ? "未连接发送端（蓄电器照常工作）" : "没有在途能量");
+                            text = ((!value2.linked) ? "未连接发送端" : "没有在途能量");
                         }
                         value2.diagTimer -= dt;
                         if (value2.diagTimer <= 0f)
@@ -799,18 +864,58 @@ namespace EnergyHub
                         }
                         break;
                     }
+                    case HubMode.Battery:
+                    {
+                        // 仅蓄电（1.20.0）：只当超大蓄电器用 —— 电网有余就充、缺电就放，
+                        // 不参与对接、不消耗任何耗材。
+                        value2.linked = false;
+                        value2.receiverCount = 0;
+                        value2.senderCount = 0;
+                        value2.itemStarved = false;
+                        value2.starveNeed = null;
+                        int db = BatteryDir(value2, exc, powerSystem, dt);
+                        exc.state = ((db > 0) ? 1f : ((db < 0) ? (-1f) : 0f));
+                        exc.targetState = exc.state;
+                        ApplyChargeCap(value2, ref exc, db, powerSystem);
+                        if (db != 0)
+                        {
+                            value2.gridHold = C.FxHoldSec;
+                        }
+                        num3 = ((db != 0 || value2.gridHold > 0f) ? 1f : 0f);
+                        if (exc.networkId <= 0)
+                        {
+                            text = "没有接入电网";
+                        }
+                        else if (db > 0)
+                        {
+                            text = "仅蓄电：正在充电";
+                        }
+                        else if (db < 0)
+                        {
+                            text = "仅蓄电：正在放电";
+                        }
+                        else
+                        {
+                            text = (exc.currPoolEnergy >= value2.Capacity) ? "仅蓄电：池子已满" : "仅蓄电：电网没有余电";
+                        }
+                        break;
+                    }
                     default:
-                        exc.state = 0f;
-                        exc.targetState = 0f;
+                    {
+                        // 关机（原「待机」）：不参与对接，也不参与电网充放 —— 池子保持当前电量。
                         value2.linked = false;
                         value2.receiverCount = 0;
                         value2.senderCount = 0;
                         value2.storageDir = 0;
                         value2.storageHold = 0f;
+                        exc.state = 0f;
+                        exc.targetState = 0f;
+                        ApplyChargeCap(value2, ref exc, 0, powerSystem);
                         value2.gridHold = 0f;
-                        num3 = (flag2 ? 1f : 0f);
-                        text = ((exc.networkId > 0) ? "电网里没有电" : "没有接入电网");
+                        num3 = 0f;
+                        text = (exc.networkId > 0) ? "关机，不参与电网充放" : "没有接入电网";
                         break;
+                    }
                     }
                     powerSystem.excPool[val4.powerExcId] = exc;
                     value2.fxTarget = num3;
@@ -849,9 +954,17 @@ namespace EnergyHub
                         {
                             text3 = "发送";
                         }
+                        else if (value2.mode == 2)
+                        {
+                            text3 = "接收";
+                        }
+                        else if (value2.mode == (int)HubMode.Battery)
+                        {
+                            text3 = "仅蓄电";
+                        }
                         else
                         {
-                            text3 = ((value2.mode == 2) ? "接收" : "待机");
+                            text3 = "关机";
                         }
                         Plugin.Log.LogInfo(("枢纽 #" + key2 + "（" + text3 + "）特效" + (flag5 ? "启动" : ("停止：" + value2.fxReason))));
                     }
@@ -878,8 +991,11 @@ namespace EnergyHub
         /// 字段顺序变了就必须 +1：联机两端版本不一致时直接丢弃对方的包，
         /// 而不是拿旧格式去读新字段（那会读出错位的垃圾值，池子/等级瞬间变成天文数字）。
         /// v2 = 1.19.7，新增 netExcState / netExcPerTick。
+        /// v3 = 1.20.0，新增 poolOn（蓄电开关）/ demand（本机需求）/ planetNeed（星球缺口）。
+        /// v4 = 1.20.0 修订：删掉 poolOn（蓄电开关取消），字段顺序整体前移一位。
+        /// v5 = 1.21.0 修订：删掉 upAcc / upMat（等级改成全局研究进度，不再有每台塔的进度池）。
         /// </summary>
-        internal const int ProtocolVersion = 2;
+        internal const int ProtocolVersion = 5;
 
         /// <summary>
         /// 进星球时主机可能还没加载这颗星球的工厂，快照先存着，等 <c>OnPlanetLoadFinished</c> 再落地。
@@ -897,8 +1013,6 @@ namespace EnergyHub
             w.Write(info.level);
             w.Write(info.totalSent);
             w.Write(info.totalReceived);
-            w.Write(info.upAcc);
-            w.Write(info.upMat);
             w.Write(info.cachedPool);
             w.Write(info.ratePerSecond);
             w.Write(info.peerStockMatrix);
@@ -936,6 +1050,11 @@ namespace EnergyHub
             // 1.19.7：电网参与量（state + 实际充放功率）。少了这两个，客户端整张电网会被算成没电
             w.Write(info.netExcState);
             w.Write(info.netExcPerTick);
+
+            // v3（1.20.0）：本机需求 + 本星球缺口（v4 起删掉蓄电开关字段）。
+            // 主机靠客户端上报的 demand / planetNeed 做「按缺口优先」分配。
+            w.Write(info.demand);
+            w.Write(info.planetNeed);
         }
 
         /// <summary>按 (星球, 实体) 找记录；没有就建一条「远端占位」，等本端真的扫到这台机器再转正。</summary>
@@ -1009,7 +1128,14 @@ namespace EnergyHub
             // 增量发出去就清零，避免重复应用（丢包就算了，主机那边 0.5 秒后会用绝对值把卡槽抹平）
             info.dMatrix = info.dWarper = info.dLens = info.dBoost = info.dAcc = info.dMat = 0;
 
+            // Kind 1 = 玩家操作上报（带模式 / 对接 / 升级等级）
             MP.Send(new HubStatePacket(1, data));
+        }
+
+        /// <summary>主机：有玩家改过状态（升级 / 切换模式 / 投料）时把下一次广播提前到下一帧。</summary>
+        internal static void MarkDirty()
+        {
+            _bcastTimer = 0f;
         }
 
         /// <summary>主机：每 0.5 秒把全部枢纽状态广播一次。</summary>
@@ -1025,11 +1151,25 @@ namespace EnergyHub
             if (_byPlanet.Count == 0)
                 return;
 
-            // 广播前先从本端卡槽读一次真实存量（0.5 秒一次，代价可以忽略）
+            // 广播前先从本端卡槽读一次真实存量（0.5 秒一次，代价可以忽略）。
+            // 1.20.0：读之前先处理「待对账」的塔 —— 主机当时没有这颗星球的工厂，
+            // 只把客户端报的绝对值记在记录里；现在工厂有了，先把记录写进卡槽再 CaptureSlots，
+            // 否则空卡槽会把记录覆盖成 0，客户端那边的料就被抹掉了。
             foreach (var pkv in _byPlanet)
             {
                 foreach (var kv in pkv.Value)
-                    CaptureSlots(kv.Value);
+                {
+                    HubInfo h = kv.Value;
+                    if (h.needReconcile && StorageIdOf(FactoryOf(h.planetId), h.entityId) > 0)
+                    {
+                        MirrorSlots(h);
+                        h.needReconcile = false;
+                        Plugin.Log.LogInfo("[联机] 枢纽 #" + h.entityId + "（星球 " + h.planetId +
+                                           "）已加载到主机端，按离线期间的记录对账：矩阵=" + h.slotMatrix +
+                                           " 翘曲器=" + h.slotWarper + " 透镜=" + h.slotLens);
+                    }
+                    CaptureSlots(h);
+                }
             }
 
             byte[] data = BuildSnapshot(-1);
@@ -1038,8 +1178,57 @@ namespace EnergyHub
             MP.Send(new HubStatePacket(0, data));
         }
 
+        /// <summary>客户端上报节流计时。</summary>
+        private static float _reportTimer;
+
+        /// <summary>
+        /// 客户端：每 0.5 秒把**本地星球**上所有枢纽的状态上报一次（1.20.0）。
+        ///
+        /// 为什么要有这条周期性上报：主机看不到客户端星球的工厂，算不出那台接收端的需求，
+        /// 分配时只能按「满功率 5 秒」估一个权重 —— 结果就是「谁更缺电」分不出来，
+        /// 能量按等级均摊。客户端自己算好需求（<see cref="ComputeDemand"/>）报上来，
+        /// 主机就能按缺口给权重（见 <see cref="DeliverToReceivers"/>）。
+        /// </summary>
+        private static void ReportClientDemand(float dt)
+        {
+            if (MP.Authoritative || !MP.CanReport)
+                return;
+            PlanetData lp = GameMain.localPlanet;
+            if (lp == null)
+                return;
+            _reportTimer -= dt;
+            if (_reportTimer > 0f)
+                return;
+            _reportTimer = MP.BroadcastInterval;
+
+            Dictionary<int, HubInfo> mine = GetPlanet(lp.id);
+            if (mine == null || mine.Count == 0)
+                return;
+
+            // 上报前先把本端卡槽的真实存量读一遍：
+            // 主机端没加载这颗星球时用的是这份**绝对值**（不是增量），不刷新就会一直发旧值，
+            // 玩家在客户端从传送带取进来的料会被主机那份旧快照按 0 抹掉。
+            foreach (var kv in mine)
+                CaptureSlots(kv.Value);
+
+            byte[] data = BuildSnapshot(lp.id);
+            if (data == null || data.Length <= 4)
+                return;
+            // Kind 2 = 只报需求（不动模式 / 对接），主机收到后不会拿它覆盖本地控制字段
+            MP.Send(new HubStatePacket(2, data));
+
+            // 卡槽增量只该被应用一次：包已经带走了，这里立刻清零，
+            // 否则这份快照每 0.5 秒重复一次，主机按增量反复加料 = 凭空造料。
+            foreach (var kv in mine)
+            {
+                HubInfo h = kv.Value;
+                if (h == null) continue;
+                h.dMatrix = h.dWarper = h.dLens = h.dBoost = h.dAcc = h.dMat = 0;
+            }
+        }
+
         /// <summary>处理器收到的数据在这里落地。</summary>
-        internal static void OnNetData(byte[] data, bool fromHost, bool snapshot)
+        internal static void OnNetData(byte[] data, bool fromHost, bool snapshot, bool control = true)
         {
             // 主菜单 / 加载中：没有 GameMain，面板也读不到。先存着，进星球后补。
             if (GameMain.data == null)
@@ -1062,7 +1251,7 @@ namespace EnergyHub
             using (MemoryStream ms = new MemoryStream(data))
             using (BinaryReader r = new BinaryReader(ms))
             {
-                ApplyStates(r, fromHost, snapshot);
+                ApplyStates(r, fromHost, snapshot, control);
             }
         }
 
@@ -1081,7 +1270,7 @@ namespace EnergyHub
         /// <para><paramref name="fromHost"/> = true 表示这是主机发下来的（客户端回放）；</para>
         /// <para><paramref name="snapshot"/> = true 表示全量快照，false 表示客户端主动上报的单台操作。</para>
         /// </summary>
-        internal static void ApplyStates(BinaryReader r, bool fromHost, bool snapshot)
+        internal static void ApplyStates(BinaryReader r, bool fromHost, bool snapshot, bool control = true)
         {
             int ver = r.ReadInt32();
             if (ver != ProtocolVersion)
@@ -1105,8 +1294,19 @@ namespace EnergyHub
 
                 // 客户端刚点过（1.5 秒内）的那台，不接受主机快照里的旧控制字段
                 bool protect = fromHost && now - info.localOpStamp < 1.5f;
-                if (!ReadHubFrom(r, info, pid, eid, !protect, fromHost))
+                int beforeLevel = info.level;
+                // 1.20.0 修：`linked` / `itemStarved` / `peerStock*` 这些是**主机算出来的派生状态**，
+                // 只有「主机下发的包」和「客户端明确操作一次的包（Kind 1）」可以写。
+                // 客户端每 0.5 秒一次的 Kind 2 需求上报里带的还是它 0.5 秒前的旧值，
+                // 拿来覆盖主机会让面板的「缺料提示 / 对端存量」来回闪。
+                bool applyDerived = fromHost || control;
+                if (!ReadHubFrom(r, info, pid, eid, control && !protect, fromHost, applyDerived))
                     break;
+
+                // 主机侧：客户端刚升了一级，别等到 0.5 秒的下一轮广播，
+                // 下一帧就把新等级发给所有客户端（否则那一端会在面板上看到旧等级）。
+                if (!fromHost && info.level != beforeLevel)
+                    MarkDirty();
 
                 if (fromHost)
                 {
@@ -1225,7 +1425,7 @@ namespace EnergyHub
         /// 这里只读后面的字段，避免重复读。
         /// </summary>
         private static bool ReadHubFrom(BinaryReader r, HubInfo info, int pid, int eid,
-                                        bool overwriteControl, bool fromHost)
+                                        bool overwriteControl, bool fromHost, bool applyDerived = true)
         {
             int mode = r.ReadInt32();
             int peerPid = r.ReadInt32();
@@ -1233,8 +1433,6 @@ namespace EnergyHub
             int level = r.ReadInt32();
             long sent = r.ReadInt64();
             long received = r.ReadInt64();
-            long upAcc = r.ReadInt64();
-            long upMat = r.ReadInt64();
             long pool = r.ReadInt64();
             float rate = r.ReadSingle();
             int stMatrix = r.ReadInt32();
@@ -1257,6 +1455,10 @@ namespace EnergyHub
             float netFx = r.ReadSingle();
             float netExcState = r.ReadSingle();
             long netExcPerTick = r.ReadInt64();
+            // v3（1.20.0）：本机需求 + 本星球缺口（v4 起不再有蓄电开关）
+
+            long demand = r.ReadInt64();
+            long planetNeed = r.ReadInt64();
 
             int prevLevel = info.level;
 
@@ -1266,8 +1468,6 @@ namespace EnergyHub
             {
                 info.totalSent = sent;
                 info.totalReceived = received;
-                info.upAcc = upAcc;
-                info.upMat = upMat;
                 info.cachedPool = Math.Max(0L, pool);
                 info.ratePerSecond = rate;
                 info.netFxLevel = Mathf.Clamp01(netFx);
@@ -1282,27 +1482,45 @@ namespace EnergyHub
                 info.slotSynced = true;
             }
 
-            info.peerStockMatrix = stMatrix;
-            info.peerStockWarper = stWarper;
-            info.peerStockLens = stLens;
-            info.peerStockStamp = Time.time;
-            info.linked = (flags & 1) != 0;
-            info.itemStarved = (flags & 2) != 0;
-            info.peerValid = (flags & 4) != 0;
-            info.peerUnloaded = (flags & 8) != 0;
-            info.peerStale = (flags & 16) != 0;
-            info.starveNeed = need == 1 ? "信息矩阵" : need == 2 ? "翘曲器+透镜" : null;
-            info.level = Math.Max(1, Math.Min(C.MaxPoolLevel, level));
+            // 派生状态（对接是否生效 / 缺料 / 对端卡槽）只认主机下发，以及客户端「刚操作过」的那一包。
+            // Kind 2 只是每 0.5 秒一次的需求上报，里面的这几个字段是客户端上一轮看到的旧值，
+            // 写回主机会让面板上的「缺料：是/否」「对端存量」跟着来回跳。
+            if (applyDerived)
+            {
+                info.peerStockMatrix = stMatrix;
+                info.peerStockWarper = stWarper;
+                info.peerStockLens = stLens;
+                info.peerStockStamp = Time.time;
+                info.linked = (flags & 1) != 0;
+                info.itemStarved = (flags & 2) != 0;
+                info.peerValid = (flags & 4) != 0;
+                info.peerUnloaded = (flags & 8) != 0;
+                info.peerStale = (flags & 16) != 0;
+                info.starveNeed = need == 1 ? "信息矩阵" : need == 2 ? "翘曲器+透镜" : null;
+            }
+
+            // ---- 能量池等级（1.21.0：全局研究进度，**只升不降**）----
+            // 研究进度只增不减，所以不管包是主机发的还是客户端发的，等级都只能往上走：
+            //   · 主机 → 客户端：客户端本地科技状态可能晚半秒，别拿旧包把等级压回去；
+            //   · 客户端 → 主机：两端研究进度应该一致，取 max 天然幂等（旧包不会造成回退）。
+            int newLevel = Math.Max(1, Math.Min(C.MaxPoolLevel, level));
+            if (newLevel > info.level)
+                info.level = newLevel;
+            if (prevLevel != info.level)
+            {
+                info.storageDir = 0;
+                info.storageHold = 0f;
+            }
 
             if (!fromHost)
             {
-                // 客户端点了「升级」：它已经从自己那份（主机广播的）进度池里扣过料了，
-                // 主机这边按旧等级把同样的料补扣一次，池子才对得上。
-                for (int lv = prevLevel; lv < info.level; lv++)
-                {
-                    info.upAcc = Math.Max(0L, info.upAcc - C.UpgradeCostOf(lv));
-                    info.upMat = Math.Max(0L, info.upMat - C.UpgradeCost2Of(lv));
-                }
+                // 1.20.0：需求只能由「那台接收端所在的那一端」算得准（池子空余 + 本地电网缺口），
+                // 所以主机直接采信客户端报上来的这份数，并刷新时间戳 ——
+                // DeliverToReceivers 的 fresh 判定靠它，过期就退回按满功率估算。
+                info.demand = Math.Max(0L, demand);
+                info.planetNeed = Math.Max(0L, planetNeed);
+                info.demandStamp = Time.time;
+                info.demandFresh = true;
 
                 if (StorageIdOf(FactoryOf(pid), eid) > 0)
                 {
@@ -1325,6 +1543,22 @@ namespace EnergyHub
                     info.slotAcc = Math.Max(0, stAcc2);
                     info.slotMat = Math.Max(0, stGrav2);
                     info.slotSynced = true;
+
+                    // 1.20.0 修：**经济类字段也得采用客户端的绝对值**。
+                    // 否则主机这份记录里池子 / 速率 / 累计 / 电网参与量一直是 0（主机没模拟这台机器），
+                    // 0.5 秒一次的广播照旧把它们发给客户端，客户端 ApplyRemoteGrid 拿到 0 →
+                    // 玩家眼睁睁看着自己那台塔的池子被「离线方」清零、面板速率永远是 0 W。
+                    info.cachedPool = Math.Max(0L, pool);
+                    info.ratePerSecond = rate;
+                    info.totalSent = sent;
+                    info.totalReceived = received;
+                    info.netFxLevel = Mathf.Clamp01(netFx);
+                    info.netExcState = netExcState;
+                    info.netExcPerTick = netExcPerTick;
+
+                    // 等主机端真的加载了这颗星球，把这份绝对值写进新工厂的卡槽 ——
+                    // 不然 CaptureSlots 会把记录覆盖成 0（新工厂卡槽是空的），客户端的料凭空消失。
+                    info.needReconcile = true;
                 }
             }
 
@@ -1361,8 +1595,8 @@ namespace EnergyHub
             info.slotMatrix = CountItem(f, sid, Items.InformationMatrix);
             info.slotWarper = CountItem(f, sid, ItemProto.kWarperId);
             info.slotLens = CountLens(f, sid);
-            info.slotBoost = CountItem(f, sid, C.BoostItem);
-            info.slotAcc = CountItem(f, sid, C.UpgradeItem);
+            info.slotBoost = 0;      // 1.20.0：增产剂提速取消，字段只留协议兼容
+            info.slotAcc = CountItem(f, sid, ItemProto.kAccumulator);
             info.slotMat = CountItem(f, sid, Items.GravitonMatrix);
             info.slotSynced = true;
             return true;
@@ -1393,8 +1627,8 @@ namespace EnergyHub
             bool dirty = false;
             dirty |= SetExactItem(f, sid, Items.InformationMatrix, info.slotMatrix);
             dirty |= SetExactItem(f, sid, ItemProto.kWarperId, info.slotWarper);
-            dirty |= SetExactItem(f, sid, C.BoostItem, info.slotBoost);
-            dirty |= SetExactItem(f, sid, C.UpgradeItem, info.slotAcc);
+
+            dirty |= SetExactItem(f, sid, ItemProto.kAccumulator, info.slotAcc);
             dirty |= SetExactItem(f, sid, Items.GravitonMatrix, info.slotMat);
             dirty |= SetExactLens(f, sid, info.slotLens);
             if (dirty)
@@ -1451,8 +1685,8 @@ namespace EnergyHub
             if (isLens) info.dLens += delta;
             else if (itemId == Items.InformationMatrix) info.dMatrix += delta;
             else if (itemId == ItemProto.kWarperId) info.dWarper += delta;
-            else if (itemId == C.BoostItem) info.dBoost += delta;
-            else if (itemId == C.UpgradeItem) info.dAcc += delta;
+
+            else if (itemId == ItemProto.kAccumulator) info.dAcc += delta;
             else if (itemId == Items.GravitonMatrix) info.dMat += delta;
         }
 
@@ -1480,8 +1714,8 @@ namespace EnergyHub
                 bool dirty = false;
                 dirty |= DeltaItem(f, sid, Items.InformationMatrix, info.dMatrix);
                 dirty |= DeltaItem(f, sid, ItemProto.kWarperId, info.dWarper);
-                dirty |= DeltaItem(f, sid, C.BoostItem, info.dBoost);
-                dirty |= DeltaItem(f, sid, C.UpgradeItem, info.dAcc);
+
+                dirty |= DeltaItem(f, sid, ItemProto.kAccumulator, info.dAcc);
                 dirty |= DeltaItem(f, sid, Items.GravitonMatrix, info.dMat);
                 if (info.dLens != 0)
                 {
@@ -1621,206 +1855,62 @@ namespace EnergyHub
         }
 
         /// <summary>
-        /// 升一级：材料按阶梯需求扣（见 <see cref="C.UpgradeCostOf"/> / <see cref="C.UpgradeCost2Of"/>），
-        /// 等级 +1 并立刻应用新容量。
+        /// 每 0.5 秒把「全局研究等级」同步到每一台塔（1.21.0）。
         ///
-        /// 1.13.0 起材料分两个池子：
-        ///   1) 升级进度池（<see cref="HubInfo.upAcc"/> / <see cref="HubInfo.upMat"/>）——
-        ///      卡槽里、以及传送带送进卡槽的升级材料，每 tick 自动吸进这里累积；
-        ///   2) 玩家背包——升级时直接扣，不需要搬进卡槽。
-        /// 这样后期一档 3500 个蓄电器也能分很多次送料，不必一次凑齐（蓄电器堆叠小，根本凑不齐）。
-        /// 返回 true = 升级成功。
-        /// </summary>
-        public static bool Upgrade(HubInfo info, PlanetFactory factory, int storageId, out string msg)
-        {
-            msg = "";
-            if (info == null)
-                return false;
-            if (info.level >= C.MaxPoolLevel)
-            {
-                msg = "已经是满级（" + C.MaxPoolLevel + " 级）";
-                return false;
-            }
-
-            StorageComponent stg = GetStorage(factory, storageId);
-            if (stg == null)
-            {
-                msg = "读不到卡槽";
-                return false;
-            }
-
-            int accId = C.UpgradeItem;
-            int matId = Items.GravitonMatrix;
-            int needAcc = info.UpgradeNeed;
-            int needMat = info.UpgradeNeed2;
-
-            // 卡槽里（含刚由传送带送进来的）材料先并入进度池，保证判定与扣除口径一致
-            AbsorbUpgradeItems(info, factory, storageId);
-
-            long haveAcc = info.upAcc + CountBag(accId);
-            long haveMat = info.upMat + CountBag(matId);
-
-            if (haveAcc < needAcc)
-            {
-                msg = "缺少" + Items.Name(accId) + "：" + haveAcc + " / " + needAcc +
-                      "（已投 " + info.upAcc + " + 背包 " + CountBag(accId) + "）";
-                return false;
-            }
-            if (haveMat < needMat)
-            {
-                msg = "缺少" + Items.Name(matId) + "：" + haveMat + " / " + needMat +
-                      "（已投 " + info.upMat + " + 背包 " + CountBag(matId) + "）";
-                return false;
-            }
-
-            ConsumeUpgradePool(info, factory, accId, needAcc);
-            ConsumeUpgradePool(info, factory, matId, needMat);
-
-            int newLevel = info.level + 1;
-            info.level = newLevel;
-            info.storageDir = 0;
-            info.storageHold = 0f;
-
-            Plugin.Log.LogInfo("枢纽 #" + info.entityId + "（星球 " + info.planetId + "）能量池升级到 " +
-                               info.level + " 级：容量 " + info.Capacity + " J，" +
-                               "功率 " + C.ExchangePerTickOf(info.level) + " J/tick，" +
-                               "消耗 " + Items.Name(accId) + " ×" + needAcc +
-                               " + " + Items.Name(matId) + " ×" + needMat +
-                               "（下一级需 " + C.UpgradeCostOf(info.level) + " + " +
-                               C.UpgradeCost2Of(info.level) + "）");
-
-            msg = "升级成功：能量池 " + info.level + " 级，" + UI.FmtEnergy(info.Capacity);
-            return true;
-        }
-
-        /// <summary>
-        /// 把卡槽里的升级材料吸进进度池（每 tick 调一次，传送带送料也能自动累积）。
-        /// 只吸到「当前等级需求」为止，多出来的留在卡槽里，不会凭空吞掉玩家的料。
-        /// </summary>
-        public static void AbsorbUpgradeItems(HubInfo info, PlanetFactory factory, int storageId)
-        {
-            if (info == null || factory == null || storageId <= 0)
-                return;
-            if (info.level >= C.MaxPoolLevel)
-                return;
-
-            AbsorbUpgradeOne(info, factory, storageId, C.UpgradeItem, info.UpgradeNeed, true);
-            AbsorbUpgradeOne(info, factory, storageId, Items.GravitonMatrix, info.UpgradeNeed2, false);
-        }
-
-        private static void AbsorbUpgradeOne(HubInfo info, PlanetFactory factory, int storageId,
-                                             int itemId, int need, bool isAcc)
-        {
-            if (itemId <= 0 || need <= 0)
-                return;
-            long pool = isAcc ? info.upAcc : info.upMat;
-            long room = need - pool;
-            if (room <= 0)
-                return;
-
-            int inSlot = CountItem(factory, storageId, itemId);
-            if (inSlot <= 0)
-                return;
-
-            int take = (int)Math.Min((long)inSlot, room);
-            if (take <= 0)
-                return;
-
-            // 按「实际扣到的数量」记进度，而不是按「打算扣的数量」：
-            // 两者不一致时（同一格被别的逻辑抢先吃掉）进度池会虚高，
-            // 升级判定就会放行一次根本不存在的料。
-            int got = ConsumeItem(factory, storageId, itemId, take);
-            if (got <= 0)
-                return;
-            if (isAcc) info.upAcc += got;
-            else info.upMat += got;
-        }
-
-        /// <summary>升级扣料：先扣进度池，不足的部分直接从背包扣。</summary>
-        private static void ConsumeUpgradePool(HubInfo info, PlanetFactory factory, int itemId, int need)
-        {
-            if (need <= 0 || itemId <= 0)
-                return;
-
-            bool isAcc = itemId == C.UpgradeItem;
-            long pool = isAcc ? info.upAcc : info.upMat;
-            int fromPool = (int)Math.Min(pool, (long)need);
-            if (fromPool > 0)
-            {
-                if (isAcc) info.upAcc -= fromPool;
-                else info.upMat -= fromPool;
-            }
-
-            int rest = need - fromPool;
-            if (rest <= 0)
-                return;
-            TakeBag(itemId, rest);
-        }
-
-        /// <summary>
-        /// 从玩家背包「投入」升级材料（面板上升级格的「放入」按钮）。
+        /// 这就是「拆了重建等级失效」的根治办法：等级不再是建筑状态，新塔一进表
+        /// 就拿到当前研究等级，不需要任何按位置记忆 / 恢复的逻辑。
         ///
-        /// 比塞进卡槽再等自动吸收更直接：不受卡槽格数限制，投入量还受当前等级需求封顶，
-        /// 多出来的留在背包里（不会把玩家的料一次吸干）。
-        /// 返回实际投入的数量。
+        /// 只升不降：
+        ///   · 研究进度本身单调递增；
+        ///   · 联机里客户端的研究状态可能比主机晚半秒，主机广播下来的更大值也要保住
+        ///     （<see cref="ReadHubFrom"/> 里同样取 max）。
+        /// 等级变了顺手清掉蓄电方向计时，下一帧按新功率重新判定充放。
         /// </summary>
-        public static int InvestUpgrade(HubInfo info, PlanetFactory factory, int storageId, int itemId, int n)
+        private static void SyncResearchLevel()
         {
-            if (info == null || itemId <= 0 || n <= 0)
-                return 0;
-            if (info.level >= C.MaxPoolLevel)
-                return 0;
+            int lv = PoolTech.Level;
+            if (lv < 1) lv = 1;
+            if (lv > C.MaxPoolLevel) lv = C.MaxPoolLevel;
+            if (lv <= 1)
+                return;
 
-            // 先把卡槽里还没吸的余料并进来，保证「已投」数是准的
-            AbsorbUpgradeItems(info, factory, storageId);
-
-            bool isAcc = itemId == C.UpgradeItem;
-            int need = isAcc ? info.UpgradeNeed : info.UpgradeNeed2;
-            long pool = isAcc ? info.upAcc : info.upMat;
-            long room = need - pool;
-            if (room <= 0)
-                return 0;
-
-            int want = (int)Math.Min((long)n, room);
-            int moved = TakeBag(itemId, want);
-            if (moved > 0)
+            foreach (var pkv in _byPlanet)
             {
-                if (isAcc) info.upAcc += moved;
-                else info.upMat += moved;
+                Dictionary<int, HubInfo> d = pkv.Value;
+                if (d == null)
+                    continue;
+                foreach (var kv in d)
+                {
+                    HubInfo info = kv.Value;
+                    if (info == null || info.level >= lv)
+                        continue;
+                    info.level = lv;
+                    info.storageDir = 0;
+                    info.storageHold = 0f;
+                    Plugin.Log.LogInfo("枢纽 #" + info.entityId + "（星球 " + info.planetId +
+                                       "）能量池随研究提升到 " + lv + " 级（容量 " +
+                                       info.Capacity + " J）");
+                }
             }
-            return moved;
         }
 
-        /// <summary>
-        /// 把进度池里的材料退回玩家背包（面板上升级格的「取回」按钮，避免投进去了拿不出来）。
-        ///
-        /// 优先退背包而不是卡槽：卡槽里的升级材料会在下一 tick 被 <see cref="AbsorbUpgradeItems"/>
-        /// 再吸回进度池，退进卡槽等于白点。背包满了才退回卡槽。
-        /// 返回实际退回的数量。
-        /// </summary>
-        public static int RefundUpgrade(HubInfo info, PlanetFactory factory, int storageId, int itemId)
+        /// <summary>本局是不是沙盒模式存档（1.20.0）。</summary>
+        public static bool IsSandbox
         {
-            if (info == null || factory == null || itemId <= 0)
-                return 0;
-
-            bool isAcc = itemId == C.UpgradeItem;
-            long pool = isAcc ? info.upAcc : info.upMat;
-            if (pool <= 0)
-                return 0;
-
-            int want = (int)Math.Min(pool, int.MaxValue);
-            int moved = AddToBag(itemId, want);
-            if (moved < want)
+            get
             {
-                int rest = want - moved;
-                moved += AddItem(factory, storageId, itemId, rest);
+                try
+                {
+                    if (GameMain.data != null && GameMain.data.gameDesc != null &&
+                        GameMain.data.gameDesc.isSandboxMode)
+                        return true;
+                    return GameMain.sandboxToolsEnabled;
+                }
+                catch
+                {
+                    return false;
+                }
             }
-            if (moved > 0)
-            {
-                if (isAcc) info.upAcc -= moved;
-                else info.upMat -= moved;
-            }
-            return moved;
         }
 
         /// <summary>往玩家背包加物品（读不到背包时返回 0）。</summary>
@@ -2130,6 +2220,43 @@ namespace EnergyHub
         /// 结果缓存在 info.storageDir（+1 充 / −1 放 / 0 停），调用方按自己的模式取舍：
         /// 发送端「放电优先」（缺电时支援电网），接收端「充电优先」（富余时存起来）。
         /// </summary>
+        /// <summary>
+        /// 算这台接收端的「需求」与所在星球的电力缺口（1.20.0，主机 / 客户端共用同一套口径）。
+        ///
+        /// 需求 = min(池子空余, 满功率放电 × <see cref="C.DemandSeconds"/> 秒) + 本地电网缺口折算的焦耳。
+        /// 单位统一成 J：以前把「缺口 W/s」直接加到「J」上，量纲不一致，
+        /// 结果一个 30 MW 缺口会被当成 30 MJ，需求权重偏小两个数量级。
+        /// </summary>
+        private static void ComputeDemand(HubInfo info, PowerExchangerComponent exc, PowerSystem ps)
+        {
+            if (info == null || ps == null)
+                return;
+
+            long room = info.Capacity - exc.currPoolEnergy;
+            if (room < 0) room = 0L;
+
+            long burst = C.ExchangePerTickOf(info.level) * 60L * (long)C.DemandSeconds;
+            if (burst > room) burst = room;
+
+            long deficitW = 0L;
+            if (exc.networkId > 0 && exc.networkId < ps.netPool.Length)
+            {
+                PowerNetwork net = ps.netPool[exc.networkId];
+                long need = net.energyRequired - net.energyCapacity;
+                if (need > 0) deficitW = need * 60L;
+            }
+            info.planetNeed = deficitW;
+
+            long deficitJ = (long)(deficitW * C.DemandSeconds);
+            long rest = room - burst;
+            if (rest < 0) rest = 0L;
+            if (deficitJ > rest) deficitJ = rest;
+
+            info.demand = burst + deficitJ;
+            info.demandFresh = true;
+            info.demandStamp = Time.time;
+        }
+
         private static int BatteryDir(HubInfo info, PowerExchangerComponent exc, PowerSystem ps, float dt)
         {
             PowerNetwork net = null;
@@ -2148,7 +2275,10 @@ namespace EnergyHub
             if (net != null)
             {
                 long scale = Math.Max(net.energyCapacity, net.energyRequired);
-                dead = Math.Max(1L, scale / 100L);
+                // 1.20.0 修订：死区从 1% 收到 0.1%。
+                // 充电的前提是「电网真的有余电」，但死区按 1% 算时，1 GW 的厂里 10 MW 的余量
+                // 会被当成 0，玩家看到的就是「明明有余电却不充」。
+                dead = Math.Max(1L, scale / 1000L);
             }
 
             long cap = info.Capacity;
@@ -2194,12 +2324,31 @@ namespace EnergyHub
         /// </summary>
         private static void ApplyChargeCap(HubInfo info, ref PowerExchangerComponent exc, int dir, PowerSystem ps)
         {
-            long want = C.ExchangePerTickOf(info.level);
+            // 1.20.0：方向为 0（不充不放）时功率直接归零。
+            // 以前 dir=0 也保持本级满功率，原版只按 state 结算，于是「停」的语义是靠 state=1 + 功率=空闲量
+            // 拼出来的，面板上会出现「没在充但充能功率很大」的读数。
+            long want = dir == 0 ? 0L : C.ExchangePerTickOf(info.level);
             if (dir > 0 && exc.networkId > 0 && exc.networkId < ps.netPool.Length)
             {
                 PowerNetwork net = ps.netPool[exc.networkId];
                 long idle = net.energyCapacity - net.energyRequired;
-                want = idle <= 0 ? 0 : Math.Min(idle, want);
+                // 只吃空闲量的 90%：留一点给电网自己。
+                // 原版结算里蓄电器先吃、交换站后吃（PowerSystem.GameTick 的 num33），
+                // 但发电机功率每帧都在抖，把余量吃干会让工厂在下一帧掉电。
+                long usable = idle - idle / 10;
+                want = usable <= 0 ? 0L : Math.Min(usable, want);
+
+                // 电网没有余电就干脆把 state 也归零：不只是「功率 0」。
+                // 原版 GameTick 只认 state（state >= 1 就当负载、且不管 capsCurrentTick 多大），
+                // 留着一个 state=1 的壳子会让这台塔在电网里白占一个用电位 —— 玩家看到的就是
+                // 「电网明明满载，能量池还在抢电」。
+                if (want <= 0L)
+                {
+                    exc.state = 0f;
+                    exc.targetState = 0f;
+                    info.storageDir = 0;
+                    info.storageHold = 0f;
+                }
             }
             if (exc.energyPerTick != want)
                 exc.energyPerTick = want;
@@ -2271,8 +2420,11 @@ namespace EnergyHub
             int haveWarper = CountItem(factory, storageId, ItemProto.kWarperId);
             int haveLens = CountLens(factory, storageId);
 
-            long budgetSame = (long)haveMatrix * C.EnergyPerItem;
-            long budgetCross = (long)Math.Min(haveWarper, haveLens) * C.EnergyPerItem;
+            // 1.21.4：1 个耗材换多少焦耳按等级温和增长（1 级 1 GJ，每级 +5%，见 C.EnergyPerItemAt）。
+            // 用发送端的等级：塔越高级，同一个耗材换的能量越多。
+            long perItem = C.EnergyPerItemAt(info.level);
+            long budgetSame = (long)haveMatrix * perItem;
+            long budgetCross = (long)Math.Min(haveWarper, haveLens) * perItem;
 
             // 「卡槽里完全没有这种料」才允许按 C.NoItemRate 降速送。
             bool starvedSame = haveMatrix <= 0;
@@ -2316,7 +2468,7 @@ namespace EnergyHub
                     // 对端没上报（星球未加载 / 那台机器没在被模拟）：按它「满功率放电 5 秒」的
                     // 口径估一个权重，和在线上报的接收端同一个量纲，不会因为账本大就独占份额。
                     weight = C.ExchangePerTickOf(ro.level) * 60L * (long)C.DemandSeconds;
-                    if (weight < C.EnergyPerItem) weight = C.EnergyPerItem;
+                    if (weight < perItem) weight = perItem;
                 }
                 if (weight > room) weight = room;
                 if (weight <= 0) continue;
@@ -2410,7 +2562,7 @@ namespace EnergyHub
 
                         if (t.cross) budgetCross -= add;
                         else budgetSame -= add;
-                        ChargeItems(factory, storageId, info, t.cross, add);
+                        ChargeItems(factory, storageId, info, t.cross, add, perItem);
                     }
 
                     AddPending(t.key, add);
@@ -2682,6 +2834,68 @@ namespace EnergyHub
         /// 不是消耗品就完全不碰；卡槽放不下也完全不碰。绝不再「先取出来再放回去」——
         /// 那样塞不回去就会把玩家的产线物品吞掉，而且满仓时会一直吞。
         /// </summary>
+        /// <summary>
+        /// 把原版交换站的「蓄电器缓冲」倒进本机卡槽（1.20.0，修「传送带送升级材料进不来」）。
+        ///
+        /// 根因：<c>PowerExchangerComponent.BeltUpdate</c> 在 <c>PowerSystem.GameTick</c> 里
+        /// 就已经把传送带上的空蓄电器（2206）/ 满蓄电器（2207）抓进自己的小缓冲
+        /// （<c>emptyCount</c> / <c>fullCount</c>，上限 5 个，`emptyCount &lt; 5` 才继续抓）。
+        /// 我们自己再去带尾取料时，料已经被它叼走了 —— 于是「蓄电器」这种升级材料
+        /// 只能手动从卡槽放，传送带怎么送都进不来。
+        ///
+        /// 这里每帧把缓冲倒进卡槽：2206 是升级材料，进卡槽后会被
+        /// <see cref="AbsorbUpgradeItems"/> 自动吸进升级进度池；2207 原样留在卡槽里可取出
+        /// （本模组不用满蓄电器换电，不吞玩家的东西）。
+        /// </summary>
+        private static void DrainExcAccumulators(PlanetFactory factory, int storageId, ref PowerExchangerComponent exc)
+        {
+            if (storageId <= 0 || (exc.emptyCount <= 0 && exc.fullCount <= 0))
+                return;
+            StorageComponent stg = GetStorage(factory, storageId);
+            if (stg == null)
+                return;
+
+            bool changed = false;
+            if (exc.emptyCount > 0 && exc.emptyId > 0)
+            {
+                int remainInc;
+                int added = stg.AddItem(exc.emptyId, exc.emptyCount, exc.emptyInc, out remainInc);
+                if (added > 0)
+                {
+                    exc.emptyCount = (short)(exc.emptyCount - added);
+                    exc.emptyInc = (short)remainInc;
+                    changed = true;
+                }
+            }
+            if (exc.fullCount > 0 && exc.fullId > 0)
+            {
+                int remainInc;
+                int added = stg.AddItem(exc.fullId, exc.fullCount, exc.fullInc, out remainInc);
+                if (added > 0)
+                {
+                    exc.fullCount = (short)(exc.fullCount - added);
+                    exc.fullInc = (short)remainInc;
+                    changed = true;
+                }
+            }
+            if (changed)
+                stg.NotifyStorageChange();
+        }
+
+        /// <summary>
+        /// 从接在枢纽上的输入传送带里取消耗品放进卡槽（信息矩阵 / 空间翘曲器 / 透镜 / 升级材料）。
+        ///
+        /// 1.20.0 修订（修「引力矩阵 / 蓄电器送不进去」）：
+        ///  · 以前只认 <c>exc.belt0~3</c>（前 4 个接口）和连接点 4~7，而且**看到 isOutput 就跳过**。
+        ///    玩家的带子箭头方向反过来（从塔往外铺）时，原版把这条带记成「输出带」，
+        ///    带尾的料就永远没人取，整条带堵在接口上 —— 蓄电器、引力矩阵都进不来。
+        ///    现在不看方向：只要带尾有本建筑认的料就取（原版「输出物品」这一路我们本来就没实现）。
+        ///  · 现在扫 <c>exc.belt0~3</c> + 实体全部 16 个连接点，去重后逐条取，8 个接口接哪都能进料。
+        ///  · 升级材料（空蓄电器 / 引力矩阵）卡槽放不下时**直接进升级进度池**，
+        ///    不再要求先塞进 84 格卡槽 —— 后期一次送几千个，卡槽本来就装不下。
+        ///
+        /// 取料仍然是「先看再拿」：带尾不是本建筑的料就一点不碰，绝不会把玩家的产线物品吞掉。
+        /// </summary>
         private static void PullItemsFromBelts(PlanetFactory factory, int storageId, int entityId,
                                                PowerExchangerComponent exc, HubInfo info)
         {
@@ -2692,48 +2906,40 @@ namespace EnergyHub
             if (stg == null)
                 return;
 
-            bool changed = false;
-            for (int slot = 0; slot < 8; slot++)
+            // ---- 1) 收集所有接在本实体上的传送带 ----
+            _beltBuf.Clear();
+            AddBeltCandidate(factory, exc.belt0);
+            AddBeltCandidate(factory, exc.belt1);
+            AddBeltCandidate(factory, exc.belt2);
+            AddBeltCandidate(factory, exc.belt3);
+            for (int slot = 0; slot < 16; slot++)
             {
-                int beltId = 0;
-                bool isOutput = false;
-                if (slot < 4)
+                try
                 {
-                    switch (slot)
-                    {
-                        case 0: beltId = exc.belt0; isOutput = exc.isOutput0; break;
-                        case 1: beltId = exc.belt1; isOutput = exc.isOutput1; break;
-                        case 2: beltId = exc.belt2; isOutput = exc.isOutput2; break;
-                        default: beltId = exc.belt3; isOutput = exc.isOutput3; break;
-                    }
+                    bool outFlag;
+                    int otherObjId, otherSlot;
+                    factory.ReadObjectConn(entityId, slot, out outFlag, out otherObjId, out otherSlot);
+                    if (otherObjId > 0 && otherObjId < factory.entityPool.Length)
+                        AddBeltCandidate(factory, factory.entityPool[otherObjId].beltId);
                 }
-                else
+                catch
                 {
-                    // 背面四个进口：连接点 4~7，只认「往建筑里送」的方向。
-                    try
-                    {
-                        bool outFlag;
-                        int otherObjId, otherSlot;
-                        factory.ReadObjectConn(entityId, slot, out outFlag, out otherObjId, out otherSlot);
-                        if (otherObjId > 0 && otherObjId < factory.entityPool.Length &&
-                            !outFlag && factory.entityPool[otherObjId].beltId > 0)
-                        {
-                            beltId = factory.entityPool[otherObjId].beltId;
-                            isOutput = false;
-                        }
-                    }
-                    catch
-                    {
-                        beltId = 0;
-                    }
+                    // 连接点没铺满时读越界会抛，直接忽略
                 }
-                if (beltId <= 0 || isOutput)
-                    continue;
-                if (beltId >= ct.beltPool.Length || ct.beltPool[beltId].segPathId <= 0)
-                    continue;
+            }
+            if (_beltBuf.Count == 0)
+                return;
 
-                // 每条带每帧最多取 2 个，避免一口气抽空
-                for (int k = 0; k < 2; k++)
+            // ---- 2) 逐条取料 ----
+            bool changed = false;
+            string warn = null;
+            for (int i = 0; i < _beltBuf.Count; i++)
+            {
+                int beltId = _beltBuf[i];
+                // 1.20.1：每帧每带最多取 30 个 stack（以前 3 个）。
+                // 卡槽一格现在能存 1 万，玩家一次铺几条带送料时，3 个/帧 会让人以为「没送进去」。
+                // 带子上没料时 GetItemIdAtRear 立刻返回 0，循环会马上 break，不会白跑。
+                for (int k = 0; k < 30; k++)
                 {
                     int itemId;
                     try
@@ -2747,28 +2953,52 @@ namespace EnergyHub
                     if (itemId <= 0)
                         break;
                     if (!IsConsumable(itemId))
-                        break;                      // 带尾不是我们的消耗品：整条带不碰
+                    {
+                        warn = "带尾是「" + Items.Name(itemId) + "」#" + itemId + "，不是本建筑的耗材";
+                        break;
+                    }
                     if (!BeltMayStock(info, itemId))
-                        break;                      // 当前工作模式用不上：不前送（料留在带上，不会被吞）
+                    {
+                        warn = "当前工作模式不收「" + Items.Name(itemId) + "」";
+                        break;
+                    }
+
                     if (RoomFor(stg, itemId) <= 0)
-                        break;                      // 卡槽放不下：连取都不取
+                    {
+                        warn = "卡槽放不下「" + Items.Name(itemId) + "」";
+                        break;
+                    }
 
                     byte stack, inc;
-                    int got = ct.TryPickItemAtRear(beltId, itemId, null, out stack, out inc);
+                    int got;
+                    try
+                    {
+                        got = ct.TryPickItemAtRear(beltId, itemId, null, out stack, out inc);
+                    }
+                    catch
+                    {
+                        break;
+                    }
                     if (got != itemId)
                         break;
 
                     int remainInc;
                     int added = stg.AddItem(itemId, stack, inc, out remainInc);
+                    int left = stack - added;
                     if (added > 0)
-                        changed = true;
-                    if (added < stack)
                     {
-                        // 极小概率：读数量和真正塞进去之间被别的逻辑占了格子。
-                        // 塞回带子；塞不回去只可能是带子也满了，这时才真的会丢，打日志方便排查。
-                        if (!ct.TryInsertItemAtHead(beltId, itemId, (byte)(stack - added), inc))
+                        changed = true;
+                        // 原版 AddItem 遇到空格会把 stackSize 重置成物品默认堆叠（通常 100），
+                        // 这里立刻抬回「一格 1 万」，否则同帧后续几次取料会被 100 的上限挡住。
+                        BoostSlotStack(stg, itemId);
+                    }
+
+                    if (left > 0)
+                    {
+                        // 极小概率：读数量和真正塞进去之间被别的逻辑占了格子，或者池子刚满
+                        if (!ct.TryInsertItemAtHead(beltId, itemId, (byte)left, inc))
                             Plugin.Log.LogWarning("卡槽已满，传送带上的 " + Items.Name(itemId) +
-                                                  " 无法退回（丢弃 " + (stack - added) + " 个）");
+                                                  " 无法退回（丢弃 " + left + " 个）");
                         break;
                     }
                 }
@@ -2776,6 +3006,37 @@ namespace EnergyHub
 
             if (changed)
                 stg.NotifyStorageChange();
+
+            // ---- 3) 诊断：带上有料却进不来，每 5 秒提示一次（排查「传送带送不进去」用）----
+            info.beltWarnTimer -= Time.deltaTime;
+            if (warn != null && info.beltWarnTimer <= 0f)
+            {
+                info.beltWarnTimer = 5f;
+                Plugin.Log.LogInfo("[传送带] 枢纽 #" + entityId + "（星球 " + info.planetId + "）：" + warn +
+                                   "；接口带=" + _beltBuf.Count +
+                                   " 卡槽余量 信息矩阵=" + RoomFor(stg, Items.InformationMatrix) +
+                                   " 空间翘曲器=" + RoomFor(stg, ItemProto.kWarperId) +
+                                   " 透镜=" + RoomFor(stg, Items.PrimaryLens));
+            }
+            else if (warn == null)
+            {
+                info.beltWarnTimer = 0f;
+            }
+        }
+
+        /// <summary>接在本实体上的带（去重 + 过滤空带）。</summary>
+        private static void AddBeltCandidate(PlanetFactory factory, int beltId)
+        {
+            if (beltId <= 0 || factory == null || factory.cargoTraffic == null)
+                return;
+            CargoTraffic ct = factory.cargoTraffic;
+            if (beltId >= ct.beltPool.Length)
+                return;
+            if (ct.beltPool[beltId].segPathId <= 0)
+                return;
+            if (_beltBuf.Contains(beltId))
+                return;
+            _beltBuf.Add(beltId);
         }
 
         /// <summary>给 UI 用：卡槽还能放多少个该物品（0 = 已满）。</summary>
@@ -2785,15 +3046,14 @@ namespace EnergyHub
         }
 
         /// <summary>卡槽还能再放多少个该物品（0 = 放不下了）。</summary>
-        private static int RoomFor(StorageComponent stg, int itemId)        {
+        private static int RoomFor(StorageComponent stg, int itemId)
+        {
             if (stg == null || stg.grids == null || itemId <= 0 || itemId >= 12000)
                 return 0;
-            int stack = StorageComponent.itemStackCount != null &&
-                        itemId < StorageComponent.itemStackCount.Length
-                ? StorageComponent.itemStackCount[itemId]
-                : 0;
-            if (stack <= 0)
-                stack = 100;
+            // 1.21.3：空格余量按「一格 1 万」算。
+            // 以前用 StorageComponent.itemStackCount（物品默认堆叠，通常 100），
+            // 空格被 AddItem 重置成 100 后，RoomFor 会误判「只差 100 就满了」。
+            int stack = C.SlotStackMax;
 
             int room = 0;
             int n = Math.Min(stg.size, stg.grids.Length);
@@ -2815,71 +3075,84 @@ namespace EnergyHub
         }
 
         /// <summary>
-        /// 卡槽格子数兜底：老存档里的建筑是按旧 prefab 建的（1 格），
-        /// 这里把它扩到 <see cref="C.SlotCount"/> 格，否则三种消耗品抢一格根本放不下。
+        /// 只把「该物品种」的格子抬到 <see cref="C.SlotStackMax"/>（1 万）。
+        ///
+        /// <c>StorageComponent.AddItem</c> 在空格被填上的瞬间会执行
+        /// <c>grids[i].stackSize = itemStackCount[itemId]</c>（物品默认堆叠，通常 100），
+        /// 把 <see cref="EnsureSlotSize"/> 设的 1 万覆盖掉 —— 于是这一帧只能放 100 个。
+        /// 每放一笔就针对性抬回来，比整表重扫便宜，也不会动到别的物品。
+        /// </summary>
+        private static void BoostSlotStack(StorageComponent stg, int itemId)
+        {
+            if (stg == null || stg.grids == null)
+                return;
+            int n = Math.Min(stg.size, stg.grids.Length);
+            for (int i = 0; i < n; i++)
+            {
+                if (stg.grids[i].itemId == itemId && stg.grids[i].stackSize < C.SlotStackMax)
+                    stg.grids[i].stackSize = C.SlotStackMax;   // 一次可能填好几格（整叠 > 100）
+            }
+        }
+
+        /// <summary>
+        /// 卡槽格子兜底：老存档里的建筑是按旧 prefab 建的（1 格），
+        /// 这里把它扩到 <see cref="C.SlotCount"/> 格，否则几种消耗品抢一格根本放不下。
         /// SetSize 会保留已有物品。
+        ///
+        /// 1.20.1：顺便把每一格的 stackSize 抬到 <see cref="C.SlotStackMax"/>（1 万）。
+        /// 原版 <c>AddItem</c> 认 <c>grid.stackSize</c> 当上限，所以抬上去之后
+        /// 「一种料一格存 1 万」成立 —— 传送带送多少，面板就显示多少，不会再顶在 100 上不动。
         /// </summary>
         private static void EnsureSlotSize(StorageComponent stg)
         {
-            if (stg == null || stg.size >= C.SlotCount)
+            if (stg == null || stg.grids == null)
                 return;
-            try
+            if (stg.size < C.SlotCount)
             {
-                stg.SetSize(C.SlotCount);
-            }
-            catch (Exception e)
-            {
-                if (!_slotSizeWarned)
+                try
                 {
-                    _slotSizeWarned = true;
-                    Plugin.Log.LogWarning("卡槽扩容失败（仍可用，容量偏小）: " + e.Message);
+                    stg.SetSize(C.SlotCount);
                 }
+                catch (Exception e)
+                {
+                    if (!_slotSizeWarned)
+                    {
+                        _slotSizeWarned = true;
+                        Plugin.Log.LogWarning("卡槽扩容失败（仍可用，容量偏小）: " + e.Message);
+                    }
+                }
+            }
+            int n = Math.Min(stg.size, stg.grids.Length);
+            for (int i = 0; i < n; i++)
+            {
+                if (stg.grids[i].stackSize < C.SlotStackMax)
+                    stg.grids[i].stackSize = C.SlotStackMax;
             }
         }
 
         private static bool _slotSizeWarned;
 
-        /// <summary>是不是本建筑认的消耗品。</summary>
-        /// <summary>
-        /// 提速扣料（1.10.0）：按秒累计，够 1 个就扣。
-        /// 只在「本帧真的往外送了能量、且确实在提速」时调用，空转不扣。
-        /// 扣不到（卡槽刚好被搬空）就保留累计，下次凑够再扣，不清零白送。
-        /// </summary>
-        private static void ConsumeBoost(PlanetFactory factory, int storageId, HubInfo info, int have, float dt)
-        {
-            info.boostAcc += dt * C.BoostPerSec;
-            int n = (int)info.boostAcc;
-            if (n <= 0)
-                return;
-            n = Math.Min(n, have);
-            int got = n > 0 ? ConsumeItem(factory, storageId, C.BoostItem, n) : 0;
-            info.boostAcc -= got;      // 只销掉真扣到的，扣不到就留着下次再扣
-            if (info.boostAcc > 0.999f)
-                info.boostAcc = 0.999f;
-        }
 
         /// <summary>
         /// 传送带能不能把这种物品送进卡槽。
         ///
-        /// 传能耗材（信息矩阵 / 翘曲器 / 透镜）只有「发送」模式用得上：
-        /// 待机和接收端的卡槽手动是放不进去的，皮带也不该偷偷塞进去，否则玩家的料
-        /// 会堆在一个根本不消耗的格子里（还会把面板的「缺料」状态搅乱）。
-        /// 升级材料（空蓄电器 / 引力矩阵）任何模式都要收 —— 待机时也能先攒着升级。
+        /// 1.20.1：所有模式都收。以前接收 / 仅蓄电 / 关机模式一律拒收传能耗材，玩家把
+        /// 传送带接到这类塔上时，料在带子上一直堵着、面板卡槽也是空的，看起来就是
+        /// 「传送带没接进去 / 没有数据」。现在照收不误，只是这些料在非发送模式下不会被消耗，
+        /// 面板会标灰并写明「只在发送模式消耗」。
+        /// 升级材料（空蓄电器 / 引力矩阵）本来任何模式都要收。
         /// </summary>
         private static bool BeltMayStock(HubInfo info, int itemId)
         {
-            if (itemId == C.UpgradeItem || itemId == Items.GravitonMatrix)
-                return true;
-            return info != null && info.mode == (int)HubMode.Send;
+            return true;
         }
 
         private static bool IsConsumable(int itemId)
         {
+            // 1.21.0：升级搬到科技树（引力矩阵是"研究材料"，由研究站吃），
+            // 所以枢纽卡槽只收三种传能耗材了。
             return itemId == ItemProto.kWarperId ||
                    itemId == Items.InformationMatrix ||
-                   itemId == C.UpgradeItem ||      // 1.7.0：能量池升级耗材（空蓄电器）
-                   itemId == Items.GravitonMatrix || // 1.12.0：升级耗材之二（引力矩阵）
-                   itemId == C.BoostItem ||        // 1.10.0：传输提速耗材（三级增产剂 Mk.III）
                    Items.IsLens(itemId);
         }
 
@@ -2996,33 +3269,40 @@ namespace EnergyHub
         }
 
         /// <summary>
-        /// 卡槽里有没有「任意一条链路付得起的料」。
-        /// 只用来判断「能不能提速」—— 没料时连半速额度都不该被提速翻倍，
-        /// 否则提速剂又把「白送」放大成满速。
-        /// </summary>
-        private static bool HasSendFuel(PlanetFactory factory, int storageId)
-        {
-            if (CountItem(factory, storageId, Items.InformationMatrix) > 0)
-                return true;
-            return CountItem(factory, storageId, ItemProto.kWarperId) > 0 &&
-                   CountLens(factory, storageId) > 0;
-        }
-
-        /// <summary>
-        /// 扣物品。按累计小数结算，避免「每次投递不足 200 MJ 就免费」。
+        /// 扣物品。按累计小数结算，避免「每次投递不足一个耗材的能量就免费」。
         /// 两条链路的累计分开记（<see cref="HubInfo.costAccSame"/> / <see cref="HubInfo.costAccCross"/>），
         /// 扣料只销掉**真正扣到**的数量，扣不到就留在累计里下次补 —— 不再清零白送。
+        ///
+        /// 1.21.4：加了每秒额度（<see cref="C.MaxItemsPerSec"/>）。
+        /// 以前 <c>perItem</c> 是「满速 1 秒的能量」，低负载传能时几分钟才够 1 个，
+        /// 玩家看到的就是「传能不扣料」；现在 <c>perItem</c> 是温和的等级曲线，
+        /// 再用每秒额度兜住高负载，两头都不会出问题。
         /// </summary>
-        private static void ChargeItems(PlanetFactory factory, int storageId, HubInfo info, bool crossStar, long energy)
+        private static void ChargeItems(PlanetFactory factory, int storageId, HubInfo info, bool crossStar,
+                                        long energy, long perItem)
         {
-            if (energy <= 0)
+            if (energy <= 0 || info == null)
                 return;
+            if (perItem <= 0)
+                perItem = C.EnergyPerItemAt(info.level);
+
+            // 每秒重置一次扣料额度（满速高负载时防止一帧烧空卡槽）
+            if (Time.time - info.chargeQuotaStamp >= 1f)
+            {
+                info.chargeQuotaStamp = Time.time;
+                info.chargeQuota = C.MaxItemsPerSec;
+                info.chargedLastSec = info.chargedThisSec;
+                info.chargedThisSec = 0;
+            }
 
             double acc = crossStar ? info.costAccCross : info.costAccSame;
-            acc += (double)energy / C.EnergyPerItem;
+            acc += (double)energy / perItem;
             int n = (int)Math.Floor(acc);
+            if (n > info.chargeQuota)
+                n = info.chargeQuota;                  // 本秒额度用完就停，剩下的能量算等级带来的省料
             if (n <= 0)
             {
+                if (acc > 1.0) acc = 1.0;              // 欠账最多留 1 个，别越攒越大
                 if (crossStar) info.costAccCross = acc;
                 else info.costAccSame = acc;
                 return;
@@ -3050,10 +3330,14 @@ namespace EnergyHub
             }
 
             acc -= charged;
-            if (acc > 0.999) acc = 0.999;
             if (acc < 0) acc = 0;
+            if (acc > 1.0) acc = 1.0;
             if (crossStar) info.costAccCross = acc;
             else info.costAccSame = acc;
+
+            info.chargeQuota -= charged;
+            if (info.chargeQuota < 0) info.chargeQuota = 0;
+            info.chargedThisSec += charged;
         }
 
         public static StorageComponent GetStorage(PlanetFactory factory, int storageId)
@@ -3194,7 +3478,10 @@ namespace EnergyHub
 
         public static void Export(BinaryWriter w)
         {
-            w.Write(5); // 版本 5：+ 升级进度池（1.13.0 阶梯材料）；版本 4：+ 能量池等级（1.7.0）
+            // 10：1.21.0 —— 删掉升级进度池（upAcc/upMat）与位置等级记忆表（等级改成全局研究进度）
+            // 9：位置等级记忆带上星球 / 坐标 / 是否在位；8：位置等级记忆；7：删掉蓄电开关；
+            // 6：蓄电开关；5：升级进度池；4：能量池等级
+            w.Write(10);
 
             w.Write(_byPlanet.Count);
             foreach (var pkv in _byPlanet)
@@ -3216,10 +3503,9 @@ namespace EnergyHub
                     w.Write(i.pos.x);
                     w.Write(i.pos.y);
                     w.Write(i.pos.z);
+                    // level 仍然写进去：降级到 1.20.x 的玩家还能看到等级，
+                    // 1.21.0 自己读的时候只把它当「迁移种子」（见 PoolTech.EnsureState）。
                     w.Write(i.level);
-                    // 1.13.0：已投入升级池的材料（阶梯需求下要跨多次投料累积）
-                    w.Write(i.upAcc);
-                    w.Write(i.upMat);
                 }
             }
 
@@ -3230,6 +3516,9 @@ namespace EnergyHub
                 w.Write((int)(uint)(kv.Key & 0xFFFFFFFFL));
                 w.Write(kv.Value);
             }
+
+            // 1.21.0：不再有「位置等级记忆」和「升级进度池」—— 等级是全局研究进度，
+            // 拆了重建自动就是当前等级，这两份数据已经没有意义了，存档里不再写。
         }
 
         public static void Clear()
@@ -3251,11 +3540,13 @@ namespace EnergyHub
             _starOf.Clear();
             _lastFactory = null;
             _lastPlanetId = -1;
+            _migratedLevel = -1;
 
             try
             {
                 int ver = r.ReadInt32();
                 int restored = 0;
+                int maxLevel = 1;
 
                 int planetCount = r.ReadInt32();
                 for (int p = 0; p < planetCount; p++)
@@ -3270,8 +3561,13 @@ namespace EnergyHub
                         info.mode = r.ReadInt32();
                         if (info.mode == (int)HubMode.Store)
                         {
-                            // 1.7.1：储能不再是独立模式（并入发送/接收），老档统一回待机，
-                            // 玩家重新点一次「发送/接收」即可，蓄电器功能自动带着。
+                            // 1.20.0：「储能」重新作为一个显式模式回来了，叫「仅蓄电」。
+                            // 老档里存成 3 的建筑直接转成它 —— 语义完全一致（只当蓄电器用）。
+                            info.mode = (int)HubMode.Battery;
+                        }
+                        else if (info.mode != (int)HubMode.Idle && info.mode != (int)HubMode.Send &&
+                                 info.mode != (int)HubMode.Receive && info.mode != (int)HubMode.Battery)
+                        {
                             info.mode = (int)HubMode.Idle;
                         }
                         if (ver >= 2)
@@ -3298,13 +3594,17 @@ namespace EnergyHub
                         }
                         if (ver >= 4)
                             info.level = r.ReadInt32();
-                        if (ver >= 5)
+                        if (ver >= 5 && ver < 10)
                         {
-                            info.upAcc = r.ReadInt64();
-                            info.upMat = r.ReadInt64();
+                            // 旧档的「升级进度池」：1.21.0 起升级靠科技研究，这份数据没用了，读过丢掉
+                            r.ReadInt64();
+                            r.ReadInt64();
                         }
+                        if (ver == 6)
+                            r.ReadBoolean();   // 旧档里的「蓄电开关」：开关已取消，读过丢掉
                         if (info.level < 1) info.level = 1;
                         if (info.level > C.MaxPoolLevel) info.level = C.MaxPoolLevel;
+                        if (info.level > maxLevel) maxLevel = info.level;
                         d[info.entityId] = info;
                         if (info.mode == (int)HubMode.Receive && info.peerEntityId > 0)
                         {
@@ -3332,6 +3632,38 @@ namespace EnergyHub
                         r.ReadInt64();
                     }
                 }
+
+                if (ver >= 8 && ver < 10)
+                {
+                    // 旧档的「位置等级记忆」表：1.21.0 起等级是全局研究进度，这张表作废。
+                    // 按格式读一遍丢掉即可（不能直接跳过，流是顺序的）。
+                    int lvCount = r.ReadInt32();
+                    for (int k = 0; k < lvCount; k++)
+                    {
+                        r.ReadString();
+                        if (ver >= 9)
+                        {
+                            r.ReadInt32();
+                            r.ReadSingle();
+                            r.ReadSingle();
+                            r.ReadSingle();
+                            r.ReadInt32();
+                            r.ReadInt64();
+                            r.ReadInt64();
+                            r.ReadBoolean();
+                        }
+                        else
+                        {
+                            r.ReadInt32();
+                            r.ReadInt64();
+                            r.ReadInt64();
+                        }
+                    }
+                }
+
+                // 旧存档迁移：把「存档里最高的那台塔」记成研究进度的起点，
+                // PoolTech.EnsureState 建科技状态时会把它用掉（玩家不会被打回 1 级）。
+                _migratedLevel = maxLevel;
 
                 if (restored > 0)
                     Plugin.Log.LogInfo("已从存档恢复 " + restored + " 条对接关系（这些是上次保存时的连接，" +

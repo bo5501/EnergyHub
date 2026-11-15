@@ -15,8 +15,8 @@ NAME = os.environ.get("TS_PACKAGE_NAME") or "EnergyHub"
 assert re.fullmatch(r"[A-Za-z0-9_]+", NAME), "非法包名: %r" % NAME
 
 DESC = ("星际能量枢纽塔：星球间按需自动输电，内置 20 级蓄电器（100 GJ→1 PJ，封顶 50 TW），"
-        "三级增产剂提速 ×2。联机（Nebula）下枢纽状态双向同步：主机结算，客户端操作即改即传，"
-        "本地电网随主机充放电（配电站/电力塔显示一致）。")
+        "关机/发送/接收/仅蓄电四种模式。等级在科技树「升级」页用引力矩阵重复研究，"
+        "是存档级进度、拆了重建也不丢。联机（Nebula）下枢纽状态双向同步。")
 
 DEPS = [
     "xiaoye97-BepInEx-5.4.17",

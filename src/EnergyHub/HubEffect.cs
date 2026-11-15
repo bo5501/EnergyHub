@@ -445,7 +445,8 @@ namespace EnergyHub
 
             // 1.7.1：储能不再是独立模式（并入发送/接收）。特效配色按实际模式走：
             // 只有待机用「待机」那套构图；发送 / 接收在充放电时照常亮自己的配色。
-            bool idleLike = mode == HubMode.Idle;
+            // 1.20.0：「仅蓄电」也用待机那套构图 —— 它就是个超大蓄电器，亮度仍由 fxLevel 控制。
+            bool idleLike = mode == HubMode.Idle || mode == HubMode.Battery;
 
             Material mat = mode == HubMode.Send ? _sendMat : mode == HubMode.Receive ? _recvMat : _idleMat;
             var go = new GameObject("energy-hub-fx-" + mode);

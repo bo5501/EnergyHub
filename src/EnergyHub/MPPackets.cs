@@ -10,7 +10,8 @@ namespace EnergyHub
     ///
     /// <see cref="Kind"/> 区分方向，避免两个包类型：
     ///   0 = Snapshot：主机 → 所有客户端，一次带多台（每 0.5 秒；进星球时也用它）；
-    ///   1 = Report  ：客户端 → 主机，只带刚刚操作过的那一台。
+    ///   1 = Report  ：客户端 → 主机，只带刚刚操作过的那一台（带控制字段：模式 / 对接 / 等级）。
+    ///   2 = Demand  ：客户端 → 主机，每 0.5 秒一次的本星球需求上报（只带需求与缺口，不动控制字段）。
     ///
     /// 负载用自己拼的 <see cref="System.IO.BinaryWriter"/>（见 HubManager.WriteHub），
     /// 不依赖 Nebula 的序列化规则，字段增删只影响我们自己。
@@ -39,12 +40,15 @@ namespace EnergyHub
 
             bool iAmHost = MP.IsHost;
             bool snapshot = packet.Kind == 0;
+            // Kind 2 只报需求：主机照单收下 demand / planetNeed，但不拿它覆盖模式与对接关系，
+            // 否则客户端 0.5 秒一次的轮询会把主机刚改的设置弹回去。
+            bool control = packet.Kind != 2;
 
             // 主机收到客户端上报：先落到自己的记录上（这样发送端立刻知道有人连过来了），
             // 再转发给其它客户端 —— 不然同一局里的第三个人看不到这次操作。
             if (iAmHost && !snapshot)
             {
-                MP.Dispatch(packet.Data, false, false);
+                MP.Dispatch(packet.Data, false, false, control);
                 try { NebulaModAPI.MultiplayerSession.Network.SendPacket(packet); }
                 catch { /* 有人正好掉线：本地已经应用了，转发失败不影响主流程 */ }
                 return;
@@ -55,7 +59,7 @@ namespace EnergyHub
                 return;
 
             // 客户端收到主机的东西：回放。
-            MP.Dispatch(packet.Data, true, snapshot);
+            MP.Dispatch(packet.Data, true, snapshot, true);
         }
     }
 
